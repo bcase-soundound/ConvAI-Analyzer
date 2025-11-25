@@ -1,0 +1,5 @@
+{
+  "name": "ConvAI Analyzer",
+  "description": "A powerful React application for analyzing conversation reports, featuring CSV parsing, data visualization with Recharts, and AI-powered transcript analysis using the Gemini API.",
+  "requestFramePermissions": []
+}
