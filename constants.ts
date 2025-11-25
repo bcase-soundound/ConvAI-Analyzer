@@ -1,3 +1,4 @@
+
 export const WORKER_CODE = `
 self.importScripts('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js');
 
@@ -222,13 +223,34 @@ self.onmessage = function(e) {
             finalHeaders.forEach(header => { casedRow[header] = rawRow[header.toLowerCase()]; });
             return casedRow;
         });
+        
+        // Calculate filtered stats
+        let filteredContained = 0;
+        let filteredHandleTimeSum = 0;
+        let filteredHandleTimeCount = 0;
+        matchingIndexes.forEach(index => {
+            const row = rawDataStore[index];
+            if (row['amelia handled'] === 'true') filteredContained++;
+            const ht = parseHandleTime(row['total handle time']);
+            if (ht !== null) {
+                filteredHandleTimeSum += ht;
+                filteredHandleTimeCount++;
+            }
+        });
+        const avgSeconds = filteredHandleTimeCount > 0 ? filteredHandleTimeSum / filteredHandleTimeCount : 0;
+        const avgHandleTime = Math.floor(avgSeconds / 60).toString().padStart(2, '0') + ':' + Math.floor(avgSeconds % 60).toString().padStart(2, '0');
+
         const filteredSummary = calculateSummary(matchingIndexes);
+        filteredSummary.totalContained = filteredContained;
+        filteredSummary.avgHandleTime = avgHandleTime;
+
         self.postMessage({
             type: 'page-data',
             data: pageData,
             totalFilteredRows: matchingIndexes.length,
             filteredSummary: filteredSummary,
-            filteredIndexes: matchingIndexes
+            filteredIndexes: matchingIndexes,
+            fileTotalRows: aggregators.totalRows // Send global total
         });
     } else if (type === 'request-csv-string') {
         const finalHeaders = [...new Set([...headers, ...Array.from(customMetricKeys)])];
@@ -241,11 +263,10 @@ self.onmessage = function(e) {
         const csv = Papa.unparse({ fields: finalHeaders, data: dataToExport });
         self.postMessage({ type: 'csv-string-data', csvString: csv });
     } else if (type === 'request-analysis') {
-         // (Simplified for brevity, matches legacy logic)
          const matchingIndexes = e.data.useFilteredData ? filteredIndexes : Array.from({ length: rawDataStore.length }, (_, i) => i);
-         // Logic to aggregate data for charts...
+         
          const dailyAggregation = {}, handleTimeAggregation = {}, containmentAggregation = {};
-         const events = [];
+         const dailyEvents = {};
          let totalContainedInFiltered = 0;
 
          matchingIndexes.forEach(index => {
@@ -273,46 +294,62 @@ self.onmessage = function(e) {
                     totalContainedInFiltered++;
                 }
                 
-                events.push({ time: start.getTime(), type: 'start' });
-                events.push({ time: end.getTime(), type: 'end' });
+                if(!dailyEvents[dateString]) dailyEvents[dateString] = [];
+                dailyEvents[dateString].push({ time: start.getTime(), type: 'start' });
+                dailyEvents[dateString].push({ time: end.getTime(), type: 'end' });
             }
          });
-         
-         // Calculate Max Concurrency
-         events.sort((a,b) => a.time - b.time);
-         let maxC = 0, curC = 0;
-         for(const e of events) {
-             if(e.type === 'start') { curC++; if(curC > maxC) maxC = curC; } else curC--;
-         }
 
-         // Format for UI
+         // Concurrency Trend Data Calculation
+         const concurrencyTrendData = Object.keys(dailyEvents).map(date => {
+             const events = dailyEvents[date].sort((a,b) => a.time - b.time);
+             let max = 0, current = 0;
+             let weightedSum = 0;
+             let dayDuration = 0;
+             
+             if(events.length > 1) {
+                 dayDuration = (events[events.length-1].time - events[0].time) / (1000 * 60); // minutes
+                 for(let i=0; i < events.length; i++) {
+                     const e = events[i];
+                     // Add duration from previous event to this one for weighted avg
+                     if (i > 0) {
+                        const duration = (e.time - events[i-1].time) / (1000 * 60);
+                        weightedSum += current * duration;
+                     }
+
+                     if(e.type === 'start') {
+                         current++;
+                         if(current > max) max = current;
+                     } else {
+                         current--;
+                     }
+                 }
+             }
+             return { date, max, avg: dayDuration > 0 ? weightedSum / dayDuration : 0 };
+         }).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+         
          const volumeData = Object.values(dailyAggregation);
-         const handleTimeData = Object.entries(handleTimeAggregation).map(([date, d]) => ({ date, avgMinutes: (d.total/d.count)/60 })).sort((a,b) => new Date(a.date) - new Date(b.date));
-         const containmentTrendData = Object.entries(containmentAggregation).map(([date, d]) => ({ date, rate: d.total > 0 ? (d.contained/d.total)*100 : 0 })).sort((a,b) => new Date(a.date) - new Date(b.date));
+         const handleTimeData = Object.entries(handleTimeAggregation).map(([date, d]) => ({ date, avgMinutes: (d.total/d.count)/60 })).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+         const containmentTrendData = Object.entries(containmentAggregation).map(([date, d]) => ({ date, rate: d.total > 0 ? (d.contained/d.total)*100 : 0 })).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-         // Simplified Concurrency Trend (Daily Max)
-         const dailyConcurrency = {};
-         events.forEach(e => {
-             const d = new Date(e.time).toISOString().slice(0,10);
-             if(!dailyConcurrency[d]) dailyConcurrency[d] = 0; // Just placeholder logic
-         });
-         // (Full implementation would be larger, keeping it light for this context)
-         
+         let totalMaxConcurrency = 0;
+         concurrencyTrendData.forEach(d => { if(d.max > totalMaxConcurrency) totalMaxConcurrency = d.max; });
+
          self.postMessage({
              type: 'analysis-result',
              data: {
                  volumeData,
                  handleTimeData,
                  containmentTrendData,
+                 concurrencyTrendData,
                  summary: {
-                     filteredPeakConcurrency: maxC,
+                     filteredPeakConcurrency: totalMaxConcurrency,
                      filteredConversations: matchingIndexes.length,
                      overallContainmentRate: matchingIndexes.length > 0 ? ((totalContainedInFiltered/matchingIndexes.length)*100).toFixed(1) : 0
                  }
              }
          });
     } else if (type === 'request-transcript-data') {
-         // Fetch full row data for transcript analysis
          const finalHeaders = [...new Set([...headers, ...Array.from(customMetricKeys)])];
          const rows = filteredIndexes.map(index => {
              const rawRow = rawDataStore[index];

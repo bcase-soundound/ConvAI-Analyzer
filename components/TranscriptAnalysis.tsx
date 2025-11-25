@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Play, Download, Search, Settings as SettingsIcon } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';
@@ -121,17 +122,17 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-lg border border-slate-200 flex flex-col h-full overflow-hidden">
+    <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-full overflow-hidden">
         {/* Header */}
-        <div className="p-4 border-b flex justify-between items-center bg-slate-50">
-            <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+        <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+            <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2">
                 <Search className="text-purple-600" /> Transcript Analysis (Gemini)
             </h2>
             <div className="flex gap-2">
-                <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-slate-200 rounded">
+                <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-200 rounded text-gray-600">
                     <SettingsIcon size={20} />
                 </button>
-                <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded">
+                <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded text-gray-600">
                     <X size={20} />
                 </button>
             </div>
@@ -139,38 +140,38 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
 
         <div className="flex-1 flex overflow-hidden">
             {/* Settings Sidebar */}
-            <div className={`bg-slate-50 border-r border-slate-200 p-4 w-80 overflow-y-auto transition-all ${showSettings ? 'ml-0' : '-ml-80'}`}>
+            <div className={`bg-gray-50 border-r border-gray-200 p-4 w-80 overflow-y-auto transition-all ${showSettings ? 'ml-0' : '-ml-80'}`}>
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-slate-700">API Key</label>
-                        <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem('geminiKey', e.target.value); }} className="w-full border rounded p-2 text-sm" placeholder="Gemini API Key" />
+                        <label className="block text-sm font-medium text-gray-700">API Key</label>
+                        <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem('geminiKey', e.target.value); }} className="w-full border border-gray-300 rounded p-2 text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500" placeholder="Gemini API Key" />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-slate-700">Model</label>
-                        <select value={model} onChange={e => setModel(e.target.value)} className="w-full border rounded p-2 text-sm">
+                        <label className="block text-sm font-medium text-gray-700">Model</label>
+                        <select value={model} onChange={e => setModel(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500">
                             <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                         </select>
                     </div>
-                    <div className="flex gap-2 p-1 bg-slate-200 rounded">
-                        <button onClick={() => setMode('standard')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'standard' ? 'bg-white shadow' : ''}`}>Standard</button>
-                        <button onClick={() => setMode('custom')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'custom' ? 'bg-white shadow' : ''}`}>Custom Search</button>
+                    <div className="flex gap-2 p-1 bg-gray-200 rounded">
+                        <button onClick={() => setMode('standard')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'standard' ? 'bg-white shadow text-gray-900' : 'text-gray-600'}`}>Standard</button>
+                        <button onClick={() => setMode('custom')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'custom' ? 'bg-white shadow text-gray-900' : 'text-gray-600'}`}>Custom Search</button>
                     </div>
                     {mode === 'custom' && (
                         <div>
-                            <label className="block text-sm font-medium text-slate-700">Search Criteria</label>
-                            <textarea value={customQuery} onChange={e => setCustomQuery(e.target.value)} className="w-full border rounded p-2 text-sm h-20" placeholder="Find users who are angry..." />
+                            <label className="block text-sm font-medium text-gray-700">Search Criteria</label>
+                            <textarea value={customQuery} onChange={e => setCustomQuery(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm h-20 bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500" placeholder="Find users who are angry..." />
                         </div>
                     )}
                     <div>
-                        <label className="flex items-center gap-2 text-sm">
-                            <input type="checkbox" checked={limitScope} onChange={e => setLimitScope(e.target.checked)} />
+                        <label className="flex items-center gap-2 text-sm text-gray-700">
+                            <input type="checkbox" checked={limitScope} onChange={e => setLimitScope(e.target.checked)} className="rounded border-gray-300 text-purple-600 focus:ring-purple-500 bg-white" />
                             Limit to first
-                            <input type="number" value={rowsToAnalyze} onChange={e => setRowsToAnalyze(Number(e.target.value))} className="w-16 border rounded p-1 text-xs" disabled={!limitScope} />
+                            <input type="number" value={rowsToAnalyze} onChange={e => setRowsToAnalyze(Number(e.target.value))} className="w-16 border border-gray-300 rounded p-1 text-xs bg-white text-gray-900 focus:ring-blue-500" disabled={!limitScope} />
                             conversations
                         </label>
                     </div>
-                    <button onClick={handleStart} disabled={isAnalyzing || rows.length === 0} className="w-full bg-purple-600 text-white py-2 rounded font-bold flex items-center justify-center gap-2 hover:bg-purple-700 disabled:bg-slate-400">
+                    <button onClick={handleStart} disabled={isAnalyzing || rows.length === 0} className="w-full bg-purple-600 text-white py-2 rounded font-bold flex items-center justify-center gap-2 hover:bg-purple-700 disabled:bg-gray-400 transition-colors">
                         {isAnalyzing ? 'Analyzing...' : <><Play size={16} /> Start</>}
                     </button>
                 </div>
@@ -181,32 +182,32 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                 {/* Progress Bar */}
                 {progress.total > 0 && (
                     <div className="mb-4">
-                        <div className="flex justify-between text-sm mb-1">
+                        <div className="flex justify-between text-sm mb-1 text-gray-700">
                             <span>Progress: {progress.current} / {progress.total}</span>
                             <span>{Math.round((progress.current / progress.total) * 100)}%</span>
                         </div>
-                        <div className="w-full bg-slate-200 rounded-full h-2">
+                        <div className="w-full bg-gray-200 rounded-full h-2">
                             <div className="bg-purple-600 h-2 rounded-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
                         </div>
                     </div>
                 )}
 
                 {/* Table */}
-                <div className="flex-1 overflow-auto border rounded-lg">
-                    <table className="min-w-full divide-y divide-slate-200">
-                        <thead className="bg-slate-50 sticky top-0">
+                <div className="flex-1 overflow-auto border border-gray-200 rounded-lg">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50 sticky top-0">
                             <tr>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">ID</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Transcript</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">AI Analysis</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Transcript</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">AI Analysis</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-slate-200">
+                        <tbody className="bg-white divide-y divide-gray-200">
                             {results.map((r, i) => (
                                 <tr key={i}>
                                     <td className="px-4 py-2 text-xs font-mono align-top text-blue-600">{r.row['conversation id'] || r.row['id'] || 'N/A'}</td>
-                                    <td className="px-4 py-2 text-xs text-slate-500 align-top w-1/3 truncate max-w-xs">{r.row['transcript']?.substring(0, 100)}...</td>
-                                    <td className="px-4 py-2 text-sm text-slate-800 align-top">
+                                    <td className="px-4 py-2 text-xs text-gray-500 align-top w-1/3 truncate max-w-xs">{r.row['transcript']?.substring(0, 100)}...</td>
+                                    <td className="px-4 py-2 text-sm text-gray-800 align-top">
                                         {r.error ? <span className="text-red-500">{r.error}</span> : 
                                          mode === 'standard' ? (
                                              <div>
@@ -215,7 +216,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                                              </div>
                                          ) : (
                                              <div>
-                                                 <div className={`font-bold ${r.insight?.match ? 'text-green-600' : 'text-slate-400'}`}>
+                                                 <div className={`font-bold ${r.insight?.match ? 'text-green-600' : 'text-gray-400'}`}>
                                                      {r.insight?.match ? 'MATCH' : 'NO MATCH'}
                                                  </div>
                                                  <div className="text-xs">{r.insight?.reasoning}</div>
@@ -231,7 +232,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                 
                 {results.length > 0 && !isAnalyzing && (
                     <div className="mt-4 flex justify-end">
-                        <button onClick={downloadReport} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                        <button onClick={downloadReport} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors">
                             <Download size={16} /> Download Report
                         </button>
                     </div>

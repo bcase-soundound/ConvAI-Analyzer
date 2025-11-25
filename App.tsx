@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Filter, UploadCloud, FileText, Settings, X, Search, ChevronRight, ChevronDown, Download, RefreshCw, BarChart2 } from 'lucide-react';
 import { WORKER_CODE } from './constants';
@@ -73,12 +74,10 @@ const App: React.FC = () => {
           setTableData(e.data.data);
           setFilteredIndexes(e.data.filteredIndexes);
           setSummaryStats(prev => {
-             // Merge total stats with filtered stats
              const filteredSummary = e.data.filteredSummary;
              return {
                  ...filteredSummary,
-                 totalRows: prev ? prev.totalRows : e.data.filteredSummary.totalRows || 0, // Fallback if first load
-                 totalContained: prev ? prev.totalContained : e.data.filteredSummary.totalContained || 0
+                 totalRows: e.data.fileTotalRows || 0 // Use the global total sent from worker
              };
           });
           setIsLoading(false);
@@ -97,10 +96,6 @@ const App: React.FC = () => {
            document.body.removeChild(link);
            break;
         case 'transcript-data-result':
-           // Handled in transcript component via callback prop if possible, 
-           // but simpler to store in global state for now since we are lifting state.
-           // However, to avoid passing massive data, we'll let TranscriptAnalysis request it separately 
-           // or pass a callback. For now, let's store small chunks or handle via event listener in component.
            break;
       }
     };
@@ -124,11 +119,9 @@ const App: React.FC = () => {
     setTableData([]);
     setFilters({});
     setActiveView('dashboard');
-    // Re-init worker to clear its internal state
     worker?.terminate();
     const newWorker = createWorker();
     setWorker(newWorker);
-    // Re-attach listeners (simplified by forcing re-mount or effect dependency, but simplest is full reset)
     window.location.reload(); 
   };
 
@@ -169,7 +162,6 @@ const App: React.FC = () => {
   };
 
   const handleDeeperAnalysis = () => {
-     // Check if we have active filters
      const hasFilters = Object.keys(filters).length > 0;
      worker?.postMessage({ 
        type: 'request-analysis', 
@@ -191,16 +183,16 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
       {/* Sidebar */}
-      <aside className={`bg-white border-r border-slate-200 flex flex-col transition-all duration-300 ${isSidebarOpen ? 'w-80' : 'w-0 overflow-hidden'}`}>
-        <div className="p-4 border-b border-slate-200 flex items-center justify-between">
-          <h2 className="font-bold text-slate-800 flex items-center gap-2">
-            <Filter size={20} className="text-blue-600" /> Filters
+      <aside className={`bg-white border-r border-gray-200 flex flex-col transition-all duration-300 shadow-lg ${isSidebarOpen ? 'w-80' : 'w-0 overflow-hidden'}`}>
+        <div className="p-6 flex-shrink-0">
+          <h2 className="text-2xl font-bold text-gray-800 mb-2 flex items-center">
+             <span className="mr-2 text-blue-600"><Filter size={24} /></span> Filters
           </h2>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        <div className="flex-1 overflow-y-auto px-6 pb-6 sidebar-scroll space-y-6">
            <FilterSidebar 
              options={filterOptions} 
              customMetrics={customMetrics} 
@@ -210,58 +202,79 @@ const App: React.FC = () => {
            />
         </div>
 
-        <div className="p-4 border-t border-slate-200 bg-slate-50 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <button 
-                onClick={handleDeeperAnalysis}
-                className="col-span-2 flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm font-medium transition-colors"
-            >
-                <BarChart2 size={16} /> Deeper Analysis
-            </button>
-            <button 
-                onClick={() => setActiveView('transcript')}
-                className="col-span-2 flex items-center justify-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors"
-            >
-                <FileText size={16} /> Transcript Analysis
-            </button>
+        <div className="p-4 border-t border-gray-200 bg-white space-y-3 flex-shrink-0">
+            <div className="p-3 border border-gray-200 rounded-lg bg-gray-50 space-y-2">
+                 <h4 className="text-sm font-semibold text-gray-700 mb-2">Advanced Analysis</h4>
+                 <button 
+                    onClick={handleDeeperAnalysis}
+                    className="w-full py-2 px-4 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold transition-colors flex items-center justify-center gap-2"
+                >
+                    <Search size={16} /> Deeper Analysis
+                </button>
+                <button 
+                    onClick={() => setActiveView('transcript')}
+                    className="w-full py-2 px-4 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-semibold transition-colors flex items-center justify-center gap-2"
+                >
+                    <FileText size={16} /> Transcript Analysis
+                </button>
+            </div>
+
             <button 
               onClick={handleDownloadCsv}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors"
+              className="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold transition-colors flex items-center justify-center gap-2"
             >
-              <Download size={16} /> Export
+              <Download size={16} /> Download Filtered
             </button>
             <button 
               onClick={() => handleFilterChange({})}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 text-sm font-medium transition-colors"
+              className="w-full py-2 px-4 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-semibold transition-colors"
             >
-              <RefreshCw size={16} /> Clear
+              Clear All Filters
             </button>
-          </div>
         </div>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Header */}
-        <header className="bg-white border-b border-slate-200 p-4 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-4">
-            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-600">
-               {isSidebarOpen ? <X size={20} /> : <Filter size={20} />}
-            </button>
-            <div>
-              <h1 className="text-xl font-bold text-slate-800">Conversation Analysis</h1>
-              <p className="text-sm text-slate-500 flex items-center gap-2">
-                <FileText size={12} /> {file.name}
-              </p>
-            </div>
+        <header className="p-6 md:p-8 flex-shrink-0">
+          <div className="flex justify-between items-center mb-6">
+             <div className="flex items-center">
+                <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-md hover:bg-gray-200 mr-4 text-gray-600">
+                   {isSidebarOpen ? <X size={24} /> : <Filter size={24} />}
+                </button>
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-800">Conversation Analysis</h1>
+                  <div className="flex items-center text-sm text-gray-500 mt-1">
+                    <FileText size={16} className="mr-2" /> <span>{file.name}</span>
+                  </div>
+                </div>
+             </div>
+             <button onClick={handleReset} className="px-4 py-2 bg-red-500 text-white rounded-lg font-semibold hover:bg-red-600 transition-colors flex items-center gap-2">
+                <UploadCloud size={20} /> Upload New File
+             </button>
           </div>
-          <button onClick={handleReset} className="flex items-center gap-2 px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors">
-            <UploadCloud size={16} /> Upload New
-          </button>
+          
+          {/* Active Filters Display */}
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(filters).map(([key, value]) => {
+                if (!value) return null;
+                if (key === 'dateRange' && (value as any).start) {
+                    return <span key={key} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800"><strong>Date:</strong>&nbsp;{(value as any).start} to {(value as any).end}</span>
+                }
+                if (Array.isArray(value)) {
+                    return value.map(v => <span key={`${key}-${v}`} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><strong>{key}:</strong>&nbsp;{v}</span>)
+                }
+                if (typeof value === 'string') {
+                    return <span key={key} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800"><strong>{key} contains:</strong>&nbsp;{value}</span>
+                }
+                return null;
+            })}
+          </div>
         </header>
 
         {/* View Content */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto px-6 md:px-8 pb-8 main-content">
            {activeView === 'dashboard' && (
              <Dashboard 
                stats={summaryStats} 
@@ -297,7 +310,7 @@ const App: React.FC = () => {
   );
 };
 
-// Sub-component for Filter Sidebar to keep App.tsx cleaner
+// Sub-component for Filter Sidebar
 const FilterSidebar: React.FC<{
   options: Record<string, string[]>;
   customMetrics: string[];
@@ -306,6 +319,7 @@ const FilterSidebar: React.FC<{
   onFilterChange: (f: FilterState) => void;
 }> = ({ options, customMetrics, highCardinalityFields, filters, onFilterChange }) => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [searchTerm, setSearchTerm] = useState('');
 
   const toggleExpand = (key: string) => {
     setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
@@ -340,37 +354,69 @@ const FilterSidebar: React.FC<{
   const customKeys = Object.keys(options).filter(k => customMetrics.includes(k)).sort();
 
   return (
-    <div className="space-y-6">
+    <>
+      <div className="relative mb-4">
+         <input 
+            type="search" 
+            placeholder="Search metrics..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)} 
+            className="w-full pl-8 pr-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
+         />
+         <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+            <Search size={16} className="text-gray-400" />
+         </div>
+      </div>
+
       {/* Date Range */}
       <div>
-        <h3 className="text-sm font-semibold text-slate-700 mb-2">Date Range</h3>
-        <div className="space-y-2 px-2 border-l-2 border-purple-200">
-           <input type="date" className="w-full text-sm border-slate-300 rounded-md" value={filters.dateRange?.start || ''} onChange={e => handleDateChange('start', e.target.value)} />
-           <input type="date" className="w-full text-sm border-slate-300 rounded-md" value={filters.dateRange?.end || ''} onChange={e => handleDateChange('end', e.target.value)} />
+        <h3 className="w-full flex justify-between items-center text-lg font-semibold text-gray-700 mb-2">Date Range</h3>
+        <div className="space-y-2 pl-2 border-l-2 border-purple-200 p-2">
+           <div>
+               <label className="block text-sm font-medium text-gray-600">Start Date</label>
+               <input 
+                  type="date" 
+                  className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900" 
+                  value={(filters.dateRange as any)?.start || ''} 
+                  onChange={e => handleDateChange('start', e.target.value)} 
+               />
+           </div>
+           <div>
+               <label className="block text-sm font-medium text-gray-600">End Date</label>
+               <input 
+                  type="date" 
+                  className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900" 
+                  value={(filters.dateRange as any)?.end || ''} 
+                  onChange={e => handleDateChange('end', e.target.value)} 
+               />
+           </div>
         </div>
       </div>
 
       {/* Standard Metrics */}
       <div>
-        <h3 className="text-sm font-semibold text-slate-700 mb-2">Standard Metrics</h3>
-        <div className="space-y-1">
-          {standardKeys.map(key => (
-            <div key={key} className="border-l-2 border-blue-200 pl-2">
-              <button onClick={() => toggleExpand(key)} className="flex items-center justify-between w-full py-1 text-sm text-slate-600 hover:text-blue-600">
-                <span>{key}</span>
-                {expanded[key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
+        <h3 className="w-full flex justify-between items-center text-lg font-semibold text-gray-700 mb-2">Standard Metrics</h3>
+        <div className="space-y-2 pl-2 border-l-2 border-blue-200">
+          {standardKeys.filter(k => k.toLowerCase().includes(searchTerm.toLowerCase())).map(key => (
+            <div key={key}>
+              <div 
+                 onClick={() => toggleExpand(key)} 
+                 className="flex justify-between items-center cursor-pointer p-1 rounded hover:bg-gray-100"
+              >
+                <label className="block text-sm font-medium text-gray-600 pointer-events-none capitalize">{key}</label>
+                <span className="text-gray-500">{expanded[key] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+              </div>
               {expanded[key] && (
-                <div className="mt-1 pl-1 max-h-40 overflow-y-auto space-y-1">
+                <div className="pl-2 mt-1 space-y-1 max-h-48 overflow-y-auto pr-2">
                   {options[key].map(val => (
-                    <label key={val} className="flex items-center gap-2 text-xs text-slate-600 hover:bg-slate-100 p-1 rounded cursor-pointer">
+                    <label key={val} className="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-gray-100">
                       <input 
                         type="checkbox" 
                         checked={(filters[key] as string[])?.includes(val) || false}
                         onChange={() => handleCheckboxChange(key, val)}
-                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                        className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 bg-white"
                       />
-                      <span className="truncate">{val}</span>
+                      <span className="text-sm text-gray-700 truncate">{val}</span>
                     </label>
                   ))}
                 </div>
@@ -383,25 +429,28 @@ const FilterSidebar: React.FC<{
        {/* Custom Metrics */}
        {customKeys.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Custom Metrics</h3>
-          <div className="space-y-1">
-            {customKeys.map(key => (
-              <div key={key} className="border-l-2 border-green-200 pl-2">
-                <button onClick={() => toggleExpand(key)} className="flex items-center justify-between w-full py-1 text-sm text-slate-600 hover:text-green-600">
-                  <span>{key}</span>
-                  {expanded[key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </button>
+          <h3 className="w-full flex justify-between items-center text-lg font-semibold text-gray-700 mb-2">Custom Metrics</h3>
+          <div className="space-y-2 pl-2 border-l-2 border-green-200">
+            {customKeys.filter(k => k.toLowerCase().includes(searchTerm.toLowerCase())).map(key => (
+              <div key={key}>
+                <div 
+                   onClick={() => toggleExpand(key)} 
+                   className="flex justify-between items-center cursor-pointer p-1 rounded hover:bg-gray-100"
+                >
+                  <label className="block text-sm font-medium text-gray-600 pointer-events-none capitalize">{key}</label>
+                  <span className="text-gray-500">{expanded[key] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</span>
+                </div>
                 {expanded[key] && (
-                  <div className="mt-1 pl-1 max-h-40 overflow-y-auto space-y-1">
+                  <div className="pl-2 mt-1 space-y-1 max-h-48 overflow-y-auto pr-2">
                     {options[key].map(val => (
-                      <label key={val} className="flex items-center gap-2 text-xs text-slate-600 hover:bg-slate-100 p-1 rounded cursor-pointer">
+                      <label key={val} className="flex items-center space-x-2 cursor-pointer p-1 rounded hover:bg-gray-100">
                         <input 
                           type="checkbox" 
                           checked={(filters[key] as string[])?.includes(val) || false}
                           onChange={() => handleCheckboxChange(key, val)}
-                          className="rounded border-slate-300 text-green-600 focus:ring-green-500"
+                          className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 bg-white"
                         />
-                        <span className="truncate">{val}</span>
+                        <span className="text-sm text-gray-700 truncate">{val}</span>
                       </label>
                     ))}
                   </div>
@@ -415,15 +464,16 @@ const FilterSidebar: React.FC<{
       {/* High Cardinality (Text Search) */}
       {highCardinalityFields.length > 0 && (
         <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Text Search</h3>
-          <div className="space-y-2 border-l-2 border-yellow-200 pl-2">
+          <h3 className="w-full flex justify-between items-center text-lg font-semibold text-gray-700 mb-2">Text Search Filters</h3>
+          <p className="text-xs text-gray-500 pl-2 mb-2">For metrics with 200+ unique values.</p>
+          <div className="space-y-4 pl-2 border-l-2 border-yellow-200 p-2">
              {highCardinalityFields.map(key => (
                <div key={key}>
-                 <label className="text-xs text-slate-600 block mb-1 capitalize">{key}</label>
+                 <label className="block text-sm font-medium text-gray-600 capitalize">{key}</label>
                  <input 
                    type="text" 
                    placeholder="Contains..." 
-                   className="w-full text-xs px-2 py-1 border border-slate-300 rounded focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                   className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900"
                    value={(filters[key] as string) || ''}
                    onChange={(e) => handleTextSearch(key, e.target.value)}
                  />
@@ -432,7 +482,7 @@ const FilterSidebar: React.FC<{
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 };
 

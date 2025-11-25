@@ -22,44 +22,44 @@ const FileUpload: React.FC<Props> = ({ onUpload, isLoading, progress, error }) =
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600 mb-4"></div>
-        <p className="text-lg font-semibold text-slate-700">Processing File...</p>
-        <p className="text-sm text-slate-500 mt-2">{progress}</p>
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 text-center">
+        <div className="w-10 h-10 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin mb-4"></div>
+        <p className="text-lg font-semibold text-gray-700">Processing your file...</p>
+        <p className="text-sm text-gray-500 mt-2">{progress}</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4 text-center">
       <div 
-        className="w-full max-w-lg p-12 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 transition-colors cursor-pointer text-center"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
+        className="w-full max-w-lg p-10 border-2 border-dashed border-gray-300 rounded-xl bg-white hover:bg-gray-100 transition-colors cursor-pointer"
+        onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500', 'bg-blue-50'); }}
+        onDragLeave={(e) => { e.preventDefault(); e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50'); }}
+        onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50'); handleDrop(e); }}
         onClick={() => fileInputRef.current?.click()}
       >
-        <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-          <UploadCloud className="text-blue-600" size={32} />
+        <div className="flex flex-col items-center justify-center space-y-4 pointer-events-none">
+            <div className="bg-blue-100 p-4 rounded-full">
+               <UploadCloud className="text-blue-600" size={40} />
+            </div>
+            <p className="text-lg font-semibold text-gray-700">Drag & drop your CSV file here</p>
+            <p className="text-sm text-gray-500">or</p>
+            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors pointer-events-auto">
+              Browse files
+            </button>
+            <p className="text-xs text-gray-400 mt-2">Only *.csv files are accepted</p>
         </div>
-        <h3 className="text-xl font-bold text-slate-800 mb-2">Drag & Drop CSV File</h3>
-        <p className="text-slate-500 mb-6">or click to browse</p>
-        <button className="px-6 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors">
-          Browse Files
-        </button>
         <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleChange} />
-        <p className="text-xs text-slate-400 mt-4">Only *.csv files supported</p>
       </div>
 
       {error && (
-        <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2 max-w-lg w-full border border-red-200">
-          <AlertCircle size={20} />
-          {error}
-        </div>
+        <p className="text-red-500 mt-4">{error}</p>
       )}
       
-      <div className="mt-10 text-center max-w-md">
-         <h1 className="text-2xl font-bold text-slate-800 mb-2">Conversation Analyzer</h1>
-         <p className="text-slate-600">Upload your conversation logs to gain insights into intent, sentiment, and operational metrics.</p>
+      <div className="mt-8 text-left max-w-lg w-full">
+         <h3 className="text-xl font-bold text-gray-800 mb-2">Welcome to the Conversation Analyzer</h3>
+         <p className="text-gray-600">This tool helps you process and analyze conversation reports. Simply upload your CSV file to get started.</p>
       </div>
     </div>
   );
