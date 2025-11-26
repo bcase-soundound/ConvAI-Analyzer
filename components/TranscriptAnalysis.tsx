@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { X, Play, Download, Search, Settings as SettingsIcon, Filter } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';

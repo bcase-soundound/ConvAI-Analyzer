@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Filter, UploadCloud, FileText, Settings, X, Search, ChevronRight, ChevronDown, Download, RefreshCw, BarChart2 } from 'lucide-react';
 import { WORKER_CODE } from './constants';
