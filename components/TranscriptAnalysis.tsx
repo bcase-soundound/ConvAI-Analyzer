@@ -1,9 +1,9 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Download, Search, Settings as SettingsIcon } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Play, Download, Search, Settings as SettingsIcon, Filter } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';
-import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT } from '../constants';
-import * as XLSX from 'xlsx'; // Assuming global XLSX or imported if using module
+import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO } from '../constants';
+import * as XLSX from 'xlsx';
 
 interface Props {
   onClose: () => void;
@@ -13,26 +13,40 @@ interface Props {
 }
 
 const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes, headers }) => {
-  // Config State
+  // --- STATE ---
+  // Configuration
   const [apiKey, setApiKey] = useState(localStorage.getItem('geminiKey') || '');
   const [model, setModel] = useState('gemini-2.5-flash');
   const [mode, setMode] = useState<'standard' | 'custom'>('standard');
-  const [customQuery, setCustomQuery] = useState('');
-  const [rowsToAnalyze, setRowsToAnalyze] = useState(20);
   const [limitScope, setLimitScope] = useState(true);
+  const [rowsToAnalyzeCount, setRowsToAnalyzeCount] = useState(20);
   
-  // Data State
+  // Custom Query
+  const [customQuery, setCustomQuery] = useState(localStorage.getItem('ta_customQuery') || '');
+
+  // Prompt Configuration
+  const [analysisPrompt, setAnalysisPrompt] = useState(localStorage.getItem('ta_analysisPrompt') || DEFAULT_ANALYSIS_PROMPT);
+  const [summaryPrompt, setSummaryPrompt] = useState(localStorage.getItem('ta_summaryPrompt') || DEFAULT_SUMMARY_PROMPT);
+  const [variableMapping, setVariableMapping] = useState<Record<string, string>>(JSON.parse(localStorage.getItem('ta_varMapping') || '{}'));
+
+  // UI State
+  const [settingsVisible, setSettingsVisible] = useState(true);
+  const [showPromptModal, setShowPromptModal] = useState(false);
+  const [activePromptTab, setActivePromptTab] = useState<'analysis' | 'summary'>('analysis');
+  const [viewingTranscript, setViewingTranscript] = useState<any | null>(null);
+
+  // Data & Processing
   const [rows, setRows] = useState<any[]>([]);
   const [results, setResults] = useState<any[]>([]);
-  
-  // Processing State
+  const [summary, setSummary] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [statusMsg, setStatusMsg] = useState('');
-  
-  const [showSettings, setShowSettings] = useState(true);
+  const [estimate, setEstimate] = useState('');
 
-  // Load rows from worker
+  // --- EFFECTS ---
+
+  // Load Data
   useEffect(() => {
     if (!worker) return;
     const handleMessage = (e: MessageEvent) => {
@@ -42,203 +56,627 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
     };
     worker.addEventListener('message', handleMessage);
     worker.postMessage({ type: 'request-transcript-data', filteredIndexes });
-    
     return () => worker.removeEventListener('message', handleMessage);
   }, [worker, filteredIndexes]);
 
+  // Update Estimate
+  useEffect(() => {
+    const rpm = TA_MODEL_INFO[model]?.rpm || 60;
+    const count = limitScope ? Math.min(rowsToAnalyzeCount, rows.length) : rows.length;
+    if (count <= 0) {
+        setEstimate('0s');
+        return;
+    }
+    const delayPerRequestMs = (60000 / rpm) + 500; 
+    const totalTimeMs = count * (delayPerRequestMs + 2000); // +2s for api latency
+    const seconds = Math.round(totalTimeMs / 1000);
+    
+    setEstimate(seconds < 60 ? `~${seconds} seconds` : `~${Math.floor(seconds/60)} min ${seconds%60} sec`);
+  }, [model, limitScope, rowsToAnalyzeCount, rows.length]);
+
+  // Persist Settings
+  useEffect(() => localStorage.setItem('geminiKey', apiKey), [apiKey]);
+  useEffect(() => localStorage.setItem('ta_customQuery', customQuery), [customQuery]);
+  useEffect(() => localStorage.setItem('ta_analysisPrompt', analysisPrompt), [analysisPrompt]);
+  useEffect(() => localStorage.setItem('ta_summaryPrompt', summaryPrompt), [summaryPrompt]);
+  useEffect(() => localStorage.setItem('ta_varMapping', JSON.stringify(variableMapping)), [variableMapping]);
+
+  // --- LOGIC ---
+
   const handleStart = async () => {
     if (!apiKey) { alert('API Key required'); return; }
-    
+    if (rows.length === 0) return;
+
     setIsAnalyzing(true);
     setResults([]);
-    setShowSettings(false);
-    
-    const targetRows = limitScope ? rows.slice(0, rowsToAnalyze) : rows;
+    setSummary(null);
+    setSettingsVisible(false);
+
+    const targetRows = limitScope ? rows.slice(0, rowsToAnalyzeCount) : rows;
     setProgress({ current: 0, total: targetRows.length });
 
     const gemini = new GeminiService(apiKey, model);
-    const queue = new RequestQueue(10); // ~10 RPM for Flash
-    
-    let processed = 0;
-    const tempResults: any[] = [];
+    const rpm = TA_MODEL_INFO[model]?.rpm || 10;
+    const queue = new RequestQueue(rpm);
 
-    // Prompt Template Setup
-    let template = mode === 'standard' ? DEFAULT_ANALYSIS_PROMPT : DEFAULT_CUSTOM_PROMPT;
-    if (mode === 'custom') template = template.replace('{user_query}', customQuery);
+    const tempResults: any[] = [];
+    let processed = 0;
+
+    // Prepare Template & Mappings
+    let template = mode === 'standard' ? analysisPrompt : DEFAULT_CUSTOM_PROMPT;
+    if (mode === 'custom') {
+        template = template.replace('{user_query}', customQuery);
+    }
 
     try {
-        const promises = targetRows.map((row, index) => {
+        const promises = targetRows.map(row => {
             return queue.add(async () => {
-                // Find transcript column
-                const transcriptCol = Object.keys(row).find(k => k.toLowerCase().includes('transcript')) || 'transcript';
-                const transcriptText = row[transcriptCol] || 'No Transcript';
-
-                const prompt = template.replace('{transcript_text}', transcriptText);
+                // Variable Injection
+                let prompt = template;
+                const vars = [...template.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map(m => m[1]);
                 
-                try {
-                    const responseText = await gemini.generateContent(prompt, true);
-                    const jsonStr = responseText.replace(/```json|```/g, '').trim();
-                    const insight = JSON.parse(jsonStr);
-                    
-                    const result = { row, insight, error: null };
-                    tempResults.push(result);
-                    setResults(prev => [...prev, result]);
-                } catch (e: any) {
-                    const result = { row, insight: null, error: e.message };
-                    tempResults.push(result);
-                    setResults(prev => [...prev, result]);
-                } finally {
-                    processed++;
-                    setProgress(prev => ({ ...prev, current: processed }));
+                // Track legend for prompt injection if needed (simplified for React version)
+                if (vars.includes('existing_legend')) {
+                    prompt = prompt.replace('{existing_legend}', '(Dynamic legend updates skipped for parallel processing)');
                 }
+
+                vars.forEach(v => {
+                    if (v === 'existing_legend') return;
+                    // Check mapping or default fallbacks
+                    let colName = variableMapping[v];
+                    if (!colName) {
+                        // Fallbacks
+                        if (v === 'transcript_text') colName = headers.find(h => h.toLowerCase().includes('transcript')) || '';
+                    }
+                    
+                    const val = colName && row[colName] ? String(row[colName]) : `[MISSING: ${v}]`;
+                    prompt = prompt.replace(new RegExp(`\\{${v}\\}`, 'g'), val);
+                });
+
+                let insight = null;
+                let error = null;
+
+                try {
+                    const text = await gemini.generateContent(prompt, true);
+                    const jsonStr = text.replace(/```json|```/g, '').trim();
+                    insight = JSON.parse(jsonStr);
+                } catch (e: any) {
+                    error = e.message;
+                }
+
+                const result = { row, insight, error };
+                tempResults.push(result);
+                setResults(prev => [...prev, result]);
+                
+                processed++;
+                setProgress(prev => ({ ...prev, current: processed }));
             });
         });
 
         await Promise.all(promises);
-        setStatusMsg('Analysis Complete');
+
+        if (mode === 'standard') {
+            generateSummary(tempResults, gemini);
+        }
+
     } catch (e: any) {
-        setStatusMsg(`Error: ${e.message}`);
+        alert(`Analysis Error: ${e.message}`);
     } finally {
         setIsAnalyzing(false);
     }
   };
 
+  const generateSummary = async (results: any[], gemini: GeminiService) => {
+    setIsSummarizing(true);
+    const validResults = results.filter(r => r.insight && !r.error);
+    if (validResults.length === 0) { setIsSummarizing(false); return; }
+
+    const insightsText = validResults.map(r => JSON.stringify(r.insight)).join('\n\n');
+    const prompt = summaryPrompt
+        .replace('{insight_count}', validResults.length.toString())
+        .replace('{all_insights}', insightsText);
+
+    try {
+        const text = await gemini.generateContent(prompt, true);
+        const jsonStr = text.replace(/```json|```/g, '').trim();
+        const summaryData = JSON.parse(jsonStr);
+        setSummary(formatSummaryHtml(summaryData));
+    } catch (e) {
+        console.error(e);
+        setSummary('<p class="text-red-500">Failed to generate summary.</p>');
+    } finally {
+        setIsSummarizing(false);
+    }
+  };
+
+  const formatSummaryHtml = (data: any) => {
+    let html = '';
+    const section = (title: string, items: any[], key: string, detail: string) => {
+        if (!items || items.length === 0) return '';
+        return `<div class="mb-4"><h4 class="font-bold text-gray-700 mb-2">${title}</h4><ul class="list-disc pl-5 space-y-1 text-sm text-gray-600">` +
+        items.map(i => `<li><span class="font-semibold">(${i.count}) ${i[key]}:</span> ${i[detail]}</li>`).join('') +
+        `</ul></div>`;
+    };
+    
+    html += section('Top User Intents', data.top_intents, 'intent', 'details');
+    html += section('Common Successes', data.common_successes, 'success', 'details');
+    html += section('Top Failures', data.top_failures, 'failure', 'details');
+    if (data.overall_performance) {
+        html += `<div><h4 class="font-bold text-gray-700">Overall Performance</h4><p class="text-sm text-gray-600">${data.overall_performance}</p></div>`;
+    }
+    return html;
+  };
+
   const downloadReport = () => {
-    const data = results.map(r => {
-        const base = { ...r.row };
+    const dataForSheet = results.map(r => {
+        const row = { ...r.row }; // Original Metadata
         if (mode === 'standard') {
-            base['AI Intent'] = r.insight?.intent?.name;
-            base['AI Summary'] = r.insight?.overall;
+            row['AI Intent'] = r.insight?.intent?.name || r.error;
+            row['AI Successes'] = r.insight?.successes?.map((s:any) => s.name).join(', ');
+            row['AI Failures'] = r.insight?.failures?.map((f:any) => f.name).join(', ');
+            row['AI Summary'] = r.insight?.overall;
         } else {
-            base['AI Match'] = r.insight?.match ? 'YES' : 'NO';
-            base['AI Reason'] = r.insight?.reasoning;
+            row['AI Match'] = r.insight?.match ? 'YES' : 'NO';
+            row['AI Reason'] = r.insight?.reasoning;
+            row['AI Evidence'] = r.insight?.evidence;
         }
-        return base;
+        return row;
     });
-    const ws = XLSX.utils.json_to_sheet(data);
+
     const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(dataForSheet);
     XLSX.utils.book_append_sheet(wb, ws, "Analysis");
-    XLSX.writeFile(wb, "Transcript_Analysis.xlsx");
+
+    // Add Legend if standard
+    if (mode === 'standard') {
+        const legendData: any[] = [];
+        results.forEach(r => {
+            if(!r.insight) return;
+            if(r.insight.intent) legendData.push({ Category: 'Intent', Name: r.insight.intent.name, Description: r.insight.intent.description });
+            r.insight.successes?.forEach((s:any) => legendData.push({ Category: 'Success', Name: s.name, Description: s.description }));
+            r.insight.failures?.forEach((f:any) => legendData.push({ Category: 'Failure', Name: f.name, Description: f.description }));
+        });
+        // Dedupe
+        const uniqueLegend = Array.from(new Set(legendData.map(i => JSON.stringify(i)))).map(s => JSON.parse(s));
+        const wsLegend = XLSX.utils.json_to_sheet(uniqueLegend);
+        XLSX.utils.book_append_sheet(wb, wsLegend, "Legend");
+    }
+
+    XLSX.writeFile(wb, "Transcript_Analysis_Report.xlsx");
+  };
+
+  // --- RENDER HELPERS ---
+
+  const renderInsight = (r: any) => {
+      if (r.error) return <span className="text-red-500 font-medium">Error: {r.error}</span>;
+      if (!r.insight) return <span className="text-gray-400">No Data</span>;
+
+      if (mode === 'standard') {
+          return (
+              <div className="space-y-2 text-sm">
+                  <div>
+                      <span className="font-bold text-gray-800">Intent:</span> {r.insight.intent?.name || 'N/A'}
+                      <p className="text-xs text-gray-500">{r.insight.intent?.description}</p>
+                  </div>
+                  {(r.insight.successes?.length > 0) && (
+                      <div>
+                          <span className="font-bold text-green-700">Successes:</span>
+                          <ul className="list-disc pl-4 text-xs text-gray-600">
+                              {r.insight.successes.map((s:any, i:number) => (
+                                  <li key={i}><strong>{s.name}:</strong> {s.description}</li>
+                              ))}
+                          </ul>
+                      </div>
+                  )}
+                  {(r.insight.failures?.length > 0) && (
+                      <div>
+                          <span className="font-bold text-red-700">Failures:</span>
+                          <ul className="list-disc pl-4 text-xs text-gray-600">
+                              {r.insight.failures.map((f:any, i:number) => (
+                                  <li key={i}><strong>{f.name}:</strong> {f.description}</li>
+                              ))}
+                          </ul>
+                      </div>
+                  )}
+                  <div className="pt-1 border-t border-gray-100">
+                      <span className="font-bold text-gray-800">Overall:</span> {r.insight.overall}
+                  </div>
+              </div>
+          );
+      } else {
+          return (
+              <div className={`p-3 border rounded-lg ${r.insight.match ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                  <div className={`font-bold mb-1 ${r.insight.match ? 'text-green-800' : 'text-gray-500'}`}>
+                      {r.insight.match ? 'MATCH' : 'NO MATCH'}
+                  </div>
+                  <p className="text-sm text-gray-700 mb-2">{r.insight.reasoning}</p>
+                  {r.insight.evidence && (
+                      <div className="text-xs text-gray-500 italic border-t border-gray-200 pt-1">"{r.insight.evidence}"</div>
+                  )}
+              </div>
+          );
+      }
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-lg border border-gray-200 flex flex-col h-full overflow-hidden">
-        {/* Header */}
-        <div className="p-4 border-b flex justify-between items-center bg-gray-50">
-            <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2">
-                <Search className="text-purple-600" /> Transcript Analysis (Gemini)
-            </h2>
-            <div className="flex gap-2">
-                <button onClick={() => setShowSettings(!showSettings)} className="p-2 hover:bg-gray-200 rounded text-gray-600">
-                    <SettingsIcon size={20} />
-                </button>
-                <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded text-gray-600">
-                    <X size={20} />
-                </button>
-            </div>
+    <div className="bg-white h-full flex flex-col overflow-hidden relative">
+      {/* Header */}
+      <div className="p-4 border-b flex justify-between items-center bg-white flex-shrink-0 z-20 shadow-sm">
+        <div className="flex items-center gap-4">
+            <h2 className="text-2xl font-bold text-gray-800">Transcript Analysis</h2>
+            <button 
+                onClick={() => setSettingsVisible(!settingsVisible)}
+                className="px-3 py-1.5 text-sm bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center gap-2 shadow-sm transition-all"
+            >
+                <Filter size={14} />
+                {settingsVisible ? 'Hide Settings' : 'Show Settings'}
+            </button>
         </div>
+        <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 text-gray-500 transition-colors">
+            <X size={24} />
+        </button>
+      </div>
 
-        <div className="flex-1 flex overflow-hidden">
-            {/* Settings Sidebar */}
-            <div className={`bg-gray-50 border-r border-gray-200 p-4 w-80 overflow-y-auto transition-all ${showSettings ? 'ml-0' : '-ml-80'}`}>
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">API Key</label>
-                        <input type="password" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem('geminiKey', e.target.value); }} className="w-full border border-gray-300 rounded p-2 text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500" placeholder="Gemini API Key" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Model</label>
-                        <select value={model} onChange={e => setModel(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                        </select>
-                    </div>
-                    <div className="flex gap-2 p-1 bg-gray-200 rounded">
-                        <button onClick={() => setMode('standard')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'standard' ? 'bg-white shadow text-gray-900' : 'text-gray-600'}`}>Standard</button>
-                        <button onClick={() => setMode('custom')} className={`flex-1 py-1 text-xs font-medium rounded ${mode === 'custom' ? 'bg-white shadow text-gray-900' : 'text-gray-600'}`}>Custom Search</button>
-                    </div>
-                    {mode === 'custom' && (
+      <div className="flex-1 flex overflow-hidden relative">
+        {/* LEFT PANEL: SETTINGS */}
+        <div className={`${settingsVisible ? 'w-1/3 min-w-[350px]' : 'w-0 opacity-0'} bg-gray-50 border-r border-gray-200 overflow-y-auto transition-all duration-300 flex-shrink-0`}>
+            <div className="p-6 space-y-6">
+                
+                {/* 1. API Settings */}
+                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">1. Settings</h3>
+                    <div className="space-y-3">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Search Criteria</label>
-                            <textarea value={customQuery} onChange={e => setCustomQuery(e.target.value)} className="w-full border border-gray-300 rounded p-2 text-sm h-20 bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500" placeholder="Find users who are angry..." />
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Gemini API Key</label>
+                            <input 
+                                type="password" 
+                                value={apiKey} 
+                                onChange={e => setApiKey(e.target.value)} 
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500" 
+                                placeholder="Enter your key..."
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Model</label>
+                            <select 
+                                value={model} 
+                                onChange={e => setModel(e.target.value)} 
+                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                {Object.entries(TA_MODEL_INFO).map(([key, info]) => (
+                                    <option key={key} value={key}>{info.name} ({info.rpm} RPM)</option>
+                                ))}
+                            </select>
+                        </div>
+                        <button onClick={() => { setApiKey(''); setModel('gemini-2.5-flash'); }} className="text-xs text-blue-600 hover:underline">Clear Settings</button>
+                    </div>
+                </div>
+
+                {/* 2. Mode */}
+                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <h3 className="font-semibold text-gray-800 mb-3">2. Analysis Mode</h3>
+                    <div className="flex p-1 bg-gray-100 rounded-lg mb-4">
+                        <button 
+                            onClick={() => setMode('standard')} 
+                            className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'standard' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Standard
+                        </button>
+                        <button 
+                            onClick={() => setMode('custom')} 
+                            className={`flex-1 py-2 text-sm font-medium rounded-md transition-all ${mode === 'custom' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                            Custom Search
+                        </button>
+                    </div>
+
+                    {mode === 'standard' ? (
+                        <div className="space-y-3">
+                            <p className="text-xs text-gray-500 leading-relaxed">Analyze conversations for Intent, Successes, Failures, and Overall Summary.</p>
+                            <button 
+                                onClick={() => setShowPromptModal(true)}
+                                className="w-full py-2 px-3 bg-white border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-center gap-2 transition-colors"
+                            >
+                                <SettingsIcon size={14} /> Configure Prompts & Variables
+                            </button>
+                        </div>
+                    ) : (
+                        <div>
+                            <p className="text-xs text-gray-500 mb-2">Find specific patterns (e.g., "Find frustrated users").</p>
+                            <textarea 
+                                value={customQuery}
+                                onChange={e => setCustomQuery(e.target.value)}
+                                className="w-full p-3 border border-gray-300 rounded-md text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500 min-h-[80px]"
+                                placeholder="e.g., Show me conversations where the user asked about VPN..."
+                            />
                         </div>
                     )}
-                    <div>
-                        <label className="flex items-center gap-2 text-sm text-gray-700">
-                            <input type="checkbox" checked={limitScope} onChange={e => setLimitScope(e.target.checked)} className="rounded border-gray-300 text-purple-600 focus:ring-purple-500 bg-white" />
-                            Limit to first
-                            <input type="number" value={rowsToAnalyze} onChange={e => setRowsToAnalyze(Number(e.target.value))} className="w-16 border border-gray-300 rounded p-1 text-xs bg-white text-gray-900 focus:ring-blue-500" disabled={!limitScope} />
-                            conversations
+                </div>
+
+                {/* 3. Scope */}
+                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <h3 className="font-semibold text-gray-800 mb-3">3. Select Scope</h3>
+                    <div className="space-y-2">
+                        <label className={`flex items-center p-3 border rounded-md cursor-pointer transition-colors ${!limitScope ? 'bg-blue-50 border-blue-200' : 'border-gray-200 hover:bg-gray-50'}`}>
+                            <input type="radio" name="scope" checked={!limitScope} onChange={() => setLimitScope(false)} className="text-blue-600 focus:ring-blue-500" />
+                            <span className="ml-2 text-sm text-gray-700">Analyze All ({rows.length})</span>
+                        </label>
+                        <label className={`flex items-center p-3 border rounded-md cursor-pointer transition-colors ${limitScope ? 'bg-blue-50 border-blue-200' : 'border-gray-200 hover:bg-gray-50'}`}>
+                            <input type="radio" name="scope" checked={limitScope} onChange={() => setLimitScope(true)} className="text-blue-600 focus:ring-blue-500" />
+                            <div className="ml-2 flex items-center gap-2">
+                                <span className="text-sm text-gray-700">Analyze First</span>
+                                <input 
+                                    type="number" 
+                                    value={rowsToAnalyzeCount} 
+                                    onChange={e => setRowsToAnalyzeCount(Number(e.target.value))} 
+                                    className="w-20 px-2 py-1 border border-gray-300 rounded text-sm bg-white text-gray-900 focus:ring-blue-500"
+                                    disabled={!limitScope}
+                                />
+                            </div>
                         </label>
                     </div>
-                    <button onClick={handleStart} disabled={isAnalyzing || rows.length === 0} className="w-full bg-purple-600 text-white py-2 rounded font-bold flex items-center justify-center gap-2 hover:bg-purple-700 disabled:bg-gray-400 transition-colors">
-                        {isAnalyzing ? 'Analyzing...' : <><Play size={16} /> Start</>}
+                </div>
+
+                {/* 4. Start */}
+                <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <h3 className="font-semibold text-gray-800 mb-2">4. Start Analysis</h3>
+                    <div className="mb-4 text-xs text-gray-500">
+                        <p><strong>Est. Time:</strong> {estimate}</p>
+                        <p>Based on {TA_MODEL_INFO[model]?.rpm || 60} RPM</p>
+                    </div>
+                    <button 
+                        onClick={handleStart} 
+                        disabled={isAnalyzing || rows.length === 0 || !apiKey}
+                        className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
+                    >
+                        {isAnalyzing ? (
+                            <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Analyzing...</>
+                        ) : (
+                            <><Play size={18} /> Start Analysis</>
+                        )}
                     </button>
                 </div>
             </div>
+        </div>
 
-            {/* Results Area */}
-            <div className="flex-1 flex flex-col p-4 overflow-hidden">
-                {/* Progress Bar */}
-                {progress.total > 0 && (
-                    <div className="mb-4">
-                        <div className="flex justify-between text-sm mb-1 text-gray-700">
-                            <span>Progress: {progress.current} / {progress.total}</span>
-                            <span>{Math.round((progress.current / progress.total) * 100)}%</span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div className="bg-purple-600 h-2 rounded-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
-                        </div>
+        {/* RIGHT PANEL: RESULTS */}
+        <div className="flex-1 flex flex-col h-full bg-white overflow-hidden relative">
+            
+            {/* Progress Bar (Visible only when analyzing) */}
+            {(isAnalyzing || progress.current > 0) && (
+                <div className="px-6 pt-6 pb-2">
+                    <div className="flex justify-between text-sm mb-1 font-medium text-gray-700">
+                        <span>Progress: {progress.current} / {progress.total}</span>
+                        <span>{Math.round((progress.current / progress.total) * 100)}%</span>
                     </div>
-                )}
+                    <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+                        <div 
+                            className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                            style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
 
-                {/* Table */}
-                <div className="flex-1 overflow-auto border border-gray-200 rounded-lg">
+            {/* Summary Box (Standard Mode Only) */}
+            {mode === 'standard' && summary && (
+                <div className="mx-6 mt-4 p-6 bg-gray-50 border border-gray-200 rounded-lg shadow-inner max-h-60 overflow-y-auto">
+                    <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-xl font-bold text-gray-800">Executive Summary</h3>
+                        <button onClick={downloadReport} className="text-sm bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700 transition-colors flex items-center gap-2 shadow-sm">
+                            <Download size={14} /> Download Report
+                        </button>
+                    </div>
+                    <div className="prose prose-sm max-w-none text-gray-700" dangerouslySetInnerHTML={{ __html: summary }}></div>
+                </div>
+            )}
+            
+            {/* Custom Mode Download Button */}
+            {mode === 'custom' && results.length > 0 && !isAnalyzing && (
+                 <div className="mx-6 mt-4 p-4 bg-blue-50 border border-blue-100 rounded-lg flex justify-between items-center">
+                    <div>
+                        <h3 className="font-bold text-blue-900 flex items-center gap-2"><Search size={18}/> Custom Search Results</h3>
+                        <p className="text-sm text-blue-700">Found {results.filter(r => r.insight?.match).length} matches.</p>
+                    </div>
+                    <button onClick={downloadReport} className="text-sm bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition-colors flex items-center gap-2 shadow-sm font-medium">
+                        <Download size={16} /> Download Results
+                    </button>
+                 </div>
+            )}
+
+            {/* Main Table */}
+            <div className="flex-1 overflow-auto p-6">
+                <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
                     <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50 sticky top-0">
+                        <thead className="bg-gray-50 sticky top-0 z-10">
                             <tr>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Transcript</th>
-                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">AI Analysis</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-32">ID</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-1/3">Transcript Snippet</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    {mode === 'standard' ? 'AI Generated Insights' : `Matches: "${customQuery}"`}
+                                </th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
-                            {results.map((r, i) => (
-                                <tr key={i}>
-                                    <td className="px-4 py-2 text-xs font-mono align-top text-blue-600">{r.row['conversation id'] || r.row['id'] || 'N/A'}</td>
-                                    <td className="px-4 py-2 text-xs text-gray-500 align-top w-1/3 truncate max-w-xs">{r.row['transcript']?.substring(0, 100)}...</td>
-                                    <td className="px-4 py-2 text-sm text-gray-800 align-top">
-                                        {r.error ? <span className="text-red-500">{r.error}</span> : 
-                                         mode === 'standard' ? (
-                                             <div>
-                                                 <div className="font-bold">{r.insight?.intent?.name}</div>
-                                                 <div className="text-xs">{r.insight?.overall}</div>
-                                             </div>
-                                         ) : (
-                                             <div>
-                                                 <div className={`font-bold ${r.insight?.match ? 'text-green-600' : 'text-gray-400'}`}>
-                                                     {r.insight?.match ? 'MATCH' : 'NO MATCH'}
-                                                 </div>
-                                                 <div className="text-xs">{r.insight?.reasoning}</div>
-                                             </div>
-                                         )
-                                        }
+                            {results.length === 0 ? (
+                                <tr>
+                                    <td colSpan={3} className="px-6 py-12 text-center text-gray-400">
+                                        No analysis results yet. Configure settings and click Start.
                                     </td>
                                 </tr>
-                            ))}
+                            ) : (
+                                results.map((r, i) => {
+                                    const tCol = headers.find(h => h.toLowerCase().includes('transcript')) || '';
+                                    const snippet = r.row[tCol] ? String(r.row[tCol]).substring(0, 200) + '...' : 'N/A';
+                                    const id = r.row['conversation id'] || r.row['id'] || 'N/A';
+                                    
+                                    return (
+                                        <tr key={i} className="hover:bg-gray-50 transition-colors">
+                                            <td className="px-6 py-4 align-top">
+                                                <button 
+                                                    onClick={() => setViewingTranscript(r.row)}
+                                                    className="text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline text-left"
+                                                >
+                                                    {id}
+                                                </button>
+                                            </td>
+                                            <td className="px-6 py-4 align-top text-xs text-gray-500 leading-relaxed font-mono">
+                                                {snippet}
+                                            </td>
+                                            <td className="px-6 py-4 align-top">
+                                                {renderInsight(r)}
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
                         </tbody>
                     </table>
                 </div>
-                
-                {results.length > 0 && !isAnalyzing && (
-                    <div className="mt-4 flex justify-end">
-                        <button onClick={downloadReport} className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition-colors">
-                            <Download size={16} /> Download Report
-                        </button>
-                    </div>
-                )}
             </div>
         </div>
+      </div>
+
+      {/* MODAL: PROMPT CONFIG */}
+      {showPromptModal && (
+          <div className="fixed inset-0 bg-gray-900 bg-opacity-50 z-50 flex items-center justify-center p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-200">
+                  <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
+                      <div>
+                          <h3 className="text-lg font-bold text-gray-800">Prompt Configuration</h3>
+                          <p className="text-xs text-gray-500">Customize templates and map variables to CSV columns.</p>
+                      </div>
+                      <button onClick={() => setShowPromptModal(false)} className="p-2 hover:bg-gray-200 rounded-full text-gray-500"><X size={20} /></button>
+                  </div>
+                  
+                  <div className="flex border-b">
+                      <button 
+                        onClick={() => setActivePromptTab('analysis')}
+                        className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${activePromptTab === 'analysis' ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                          Analysis Prompt
+                      </button>
+                      <button 
+                        onClick={() => setActivePromptTab('summary')}
+                        className={`flex-1 py-3 text-sm font-medium border-b-2 transition-colors ${activePromptTab === 'summary' ? 'border-blue-600 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                      >
+                          Summary Prompt
+                      </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+                      <div className="flex flex-col h-full space-y-4">
+                          <label className="text-sm font-bold text-gray-700">Template</label>
+                          <textarea 
+                             className="w-full flex-1 p-4 border border-gray-300 rounded-lg font-mono text-sm bg-white text-gray-900 focus:ring-blue-500 focus:border-blue-500 min-h-[300px]"
+                             value={activePromptTab === 'analysis' ? analysisPrompt : summaryPrompt}
+                             onChange={e => activePromptTab === 'analysis' ? setAnalysisPrompt(e.target.value) : setSummaryPrompt(e.target.value)}
+                          />
+                          
+                          {/* Variable Mapper (Only for Analysis) */}
+                          {activePromptTab === 'analysis' && (
+                              <div className="bg-white p-4 rounded-lg border border-gray-200">
+                                  <h4 className="text-sm font-bold text-gray-800 mb-2 border-b pb-2">Detected Variables</h4>
+                                  <div className="space-y-2">
+                                      {[...analysisPrompt.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map(m => m[1])
+                                        .filter((v, i, a) => a.indexOf(v) === i && v !== 'existing_legend')
+                                        .map(v => (
+                                          <div key={v} className="flex items-center gap-4 text-sm">
+                                              <span className="font-mono text-blue-600 bg-blue-50 px-2 py-1 rounded w-32 text-right">{`{${v}}`}</span>
+                                              <span className="text-gray-400">maps to</span>
+                                              <select 
+                                                 className="flex-1 border border-gray-300 rounded p-1.5 bg-white text-gray-900"
+                                                 value={variableMapping[v] || ''}
+                                                 onChange={e => setVariableMapping(prev => ({ ...prev, [v]: e.target.value }))}
+                                              >
+                                                  <option value="">-- Auto / Default --</option>
+                                                  {headers.map(h => <option key={h} value={h}>{h}</option>)}
+                                              </select>
+                                          </div>
+                                      ))}
+                                      {![...analysisPrompt.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].length && (
+                                          <p className="text-xs text-gray-400 italic">No variables detected in template (e.g. &#123;transcript_text&#125;).</p>
+                                      )}
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+                  
+                  <div className="p-4 border-t bg-white flex justify-end gap-3">
+                      <button 
+                        onClick={() => {
+                            if(confirm('Reset to defaults?')) {
+                                setAnalysisPrompt(DEFAULT_ANALYSIS_PROMPT);
+                                setSummaryPrompt(DEFAULT_SUMMARY_PROMPT);
+                                setVariableMapping({});
+                            }
+                        }}
+                        className="px-4 py-2 text-red-600 text-sm font-medium hover:bg-red-50 rounded"
+                      >
+                          Reset Defaults
+                      </button>
+                      <button 
+                        onClick={() => setShowPromptModal(false)}
+                        className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded hover:bg-blue-700 shadow-sm"
+                      >
+                          Done
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODAL: TRANSCRIPT VIEWER */}
+      {viewingTranscript && (
+          <div className="fixed inset-0 bg-gray-900 bg-opacity-75 z-[60] flex items-center justify-center p-4">
+               <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
+                   <div className="p-4 border-b bg-gray-50 flex justify-between items-center rounded-t-xl">
+                       <div>
+                           <h3 className="font-bold text-gray-800">Conversation Detail</h3>
+                           <p className="text-xs text-gray-500 font-mono">{viewingTranscript['conversation id'] || 'ID N/A'}</p>
+                       </div>
+                       <button onClick={() => setViewingTranscript(null)} className="p-2 hover:bg-gray-200 rounded-full text-gray-500"><X size={20}/></button>
+                   </div>
+                   <div className="flex-1 overflow-y-auto p-6 bg-white space-y-4">
+                       {/* Metadata Grid */}
+                       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6 p-4 bg-blue-50 rounded-lg border border-blue-100 text-xs">
+                           {Object.entries(viewingTranscript).filter(([k]) => !k.toLowerCase().includes('transcript')).slice(0, 9).map(([k, v]) => (
+                               <div key={k}>
+                                   <span className="block font-bold text-blue-800 uppercase opacity-70 mb-0.5">{k}</span>
+                                   <span className="text-gray-800 break-words">{String(v)}</span>
+                               </div>
+                           ))}
+                       </div>
+                       
+                       {/* Chat Log */}
+                       <div className="space-y-3">
+                           {(() => {
+                               const tCol = headers.find(h => h.toLowerCase().includes('transcript')) || '';
+                               const text = viewingTranscript[tCol] || '';
+                               if (!text) return <p className="text-gray-400 italic text-center">No transcript text found.</p>;
+                               
+                               // Simple Split Logic (assuming "||" or newlines)
+                               const turns = text.includes('||') ? text.split('||') : text.split('\n');
+                               
+                               return turns.map((turn:string, idx:number) => {
+                                   if(!turn.trim()) return null;
+                                   const isAgent = /amelia|agent|system|bot|virtual/i.test(turn.split(':')[0] || '');
+                                   return (
+                                       <div key={idx} className={`flex ${isAgent ? 'justify-start' : 'justify-end'}`}>
+                                           <div className={`max-w-[85%] p-3 rounded-lg text-sm leading-relaxed shadow-sm ${isAgent ? 'bg-gray-100 text-gray-800 rounded-tl-none' : 'bg-blue-600 text-white rounded-tr-none'}`}>
+                                               {turn}
+                                           </div>
+                                       </div>
+                                   );
+                               });
+                           })()}
+                       </div>
+                   </div>
+               </div>
+          </div>
+      )}
+
     </div>
   );
 };

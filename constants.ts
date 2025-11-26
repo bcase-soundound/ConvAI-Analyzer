@@ -362,6 +362,16 @@ self.onmessage = function(e) {
 };
 `;
 
+export const TA_MODEL_INFO: Record<string, { name: string; rpm: number }> = {
+    'gemini-2.5-pro': { name: 'Gemini 2.5 Pro', rpm: 2 },
+    'gemini-2.5-flash': { name: 'Gemini 2.5 Flash', rpm: 10 },
+    'gemini-2.5-flash-preview': { name: 'Gemini 2.5 Flash Preview', rpm: 10 },
+    'gemini-2.5-flash-lite': { name: 'Gemini 2.5 Flash Lite', rpm: 15 },
+    'gemini-2.5-flash-lite-preview': { name: 'Gemini 2.5 Flash Lite Preview', rpm: 15 },
+    'gemini-2.0-flash': { name: 'Gemini 2.0 Flash', rpm: 15 },
+    'gemini-2.0-flash-lite': { name: 'Gemini 2.0 Flash Lite', rpm: 30 }
+};
+
 export const DEFAULT_ANALYSIS_PROMPT = `You are an expert analyst. Analyze this transcript:
 ---
 {transcript_text}
@@ -386,3 +396,29 @@ Respond ONLY with valid JSON:
   "reasoning": "Why",
   "evidence": "Quote"
 }`;
+
+export const DEFAULT_SUMMARY_PROMPT = `You are a senior analyst. Please review the following {insight_count} individual transcript analyses and provide a high-level executive summary of common themes.
+
+Respond ONLY with a valid JSON object in the following format:
+{
+  "top_intents": [
+    { "intent": "Example: User needed a password reset", "count": 15, "details": "A brief explanation of this intent category." },
+    { "intent": "Example: User had a VPN issue", "count": 10, "details": "..." }
+  ],
+  "common_successes": [
+    { "success": "Example: AI correctly identified issue", "count": 20, "details": "..." },
+    { "success": "Example: AI provided clear instructions", "count": 8, "details": "..." }
+  ],
+  "top_failures": [
+    { "failure": "Example: AI misunderstood user's request", "count": 12, "details": "..." },
+    { "failure": "Example: AI got stuck in a loop", "count": 5, "details": "..." }
+  ],
+  "overall_performance": "A one or two-sentence conclusion on the AI's effectiveness based on the data."
+}
+
+---
+Here are the {insight_count} analyses:
+---
+
+{all_insights}
+`;
