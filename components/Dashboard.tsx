@@ -37,7 +37,7 @@ const Dashboard: React.FC<Props> = ({
               <StatCard title="Time Range" value={stats.timeRange} hint="The date and time span covered." />
               <StatCard title="Total Conversations" value={stats.totalRows.toLocaleString()} hint="Total rows in CSV." />
               <StatCard title="Filtered Conversations" value={filteredCount.toLocaleString()} hint="Rows matching active filters." />
-              <StatCard title="Avg. Handle Time" value={stats.avgHandleTime} hint="Avg duration (Finished - Created)." />
+              <StatCard title="Avg. Handle Time" value={stats.avgHandleTime || "00:00"} hint="Avg duration (Finished - Created)." />
               <StatCard title="Peak Concurrency" value={stats.peakConcurrency.toLocaleString()} hint="Max active conversations at same second." />
               <StatCard title="Avg. Concurrency" value={stats.avgConcurrency.toFixed(2)} hint="Weighted average of active conversations." />
               <StatCard title="Total Contained" value={stats.totalContained.toLocaleString()} hint="Conversations marked 'Amelia Handled' = true." />
@@ -76,8 +76,8 @@ const Dashboard: React.FC<Props> = ({
       </div>
 
       {/* Data Table */}
-      <div className="mt-6 bg-white rounded-xl shadow-md flex-grow flex flex-col overflow-hidden border border-gray-200 min-h-[500px]">
-           <div className="overflow-auto flex-1">
+      <div className="mt-6 bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-gray-200 h-[600px]">
+           <div className="overflow-auto flex-1 custom-scrollbar">
                <table className="min-w-full divide-y divide-gray-200">
                    <thead className="bg-gray-50 sticky top-0 z-10">
                        <tr>
