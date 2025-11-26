@@ -332,7 +332,8 @@ const FilterSidebar: React.FC<{
       : [...currentValues, value];
     
     const newFilters = { ...filters, [key]: newValues };
-    if (newValues.length === 0) delete newFilters[key];
+    // Cast to any to delete property, fixing TS2790 strict optionality check
+    if (newValues.length === 0) delete (newFilters as any)[key];
     onFilterChange(newFilters);
   };
 
@@ -340,13 +341,15 @@ const FilterSidebar: React.FC<{
     const currentRange = filters.dateRange || {};
     const newRange = { ...currentRange, [type]: value };
     const newFilters = { ...filters, dateRange: newRange };
-    if (!newRange.start && !newRange.end) delete newFilters.dateRange;
+    // Cast to any to delete property, fixing TS2790 strict optionality check
+    if (!newRange.start && !newRange.end) delete (newFilters as any).dateRange;
     onFilterChange(newFilters);
   };
 
   const handleTextSearch = (key: string, value: string) => {
     const newFilters = { ...filters, [key]: value };
-    if (!value) delete newFilters[key];
+    // Cast to any to delete property, fixing TS2790 strict optionality check
+    if (!value) delete (newFilters as any)[key];
     onFilterChange(newFilters);
   };
 
