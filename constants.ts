@@ -425,7 +425,25 @@ Respond ONLY with valid JSON:
   "evidence": "Quote"
 }`;
 
-export const DEFAULT_SUMMARY_PROMPT = `You are a senior analyst. Please review the following {insight_count} individual transcript analyses and provide a high-level executive summary of common themes.
+export const INTERMEDIATE_BATCH_PROMPT = `You are a senior analyst helper.
+Analyze the following batch of {count} conversation insights.
+Consolidate them into a single JSON object.
+Aggregate the 'top_intents' (with counts), 'common_successes', and 'top_failures' found in this batch.
+Do NOT write an 'overall_performance' summary yet, just aggregate the data points.
+
+Respond ONLY with valid JSON:
+{
+  "top_intents": [ { "intent": "Name", "count": 0, "details": "Merged details" } ],
+  "common_successes": [ { "success": "Name", "count": 0, "details": "Merged details" } ],
+  "top_failures": [ { "failure": "Name", "count": 0, "details": "Merged details" } ]
+}
+
+---
+Batch Insights:
+---
+{batch_insights}`;
+
+export const DEFAULT_SUMMARY_PROMPT = `You are a senior analyst. Please review the following {insight_count} individual transcript analyses (or batched summaries) and provide a high-level executive summary of common themes.
 
 Respond ONLY with a valid JSON object in the following format:
 {

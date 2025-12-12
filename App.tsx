@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Filter, UploadCloud, FileText, Settings, X, Search, ChevronRight, ChevronDown, Download, RefreshCw, BarChart2 } from 'lucide-react';
+import { Filter, UploadCloud, FileText, Settings, X, Search, ChevronRight, ChevronLeft, ChevronDown, Download, RefreshCw, BarChart2 } from 'lucide-react';
 import { WORKER_CODE } from './constants';
 import { SummaryStats, FilterState, ParsedDataResponse, AnalysisResult } from './types';
 import FileUpload from './components/FileUpload';
@@ -185,10 +185,17 @@ const App: React.FC = () => {
     <div className="flex h-screen overflow-hidden bg-gray-100 font-sans">
       {/* Sidebar */}
       <aside className={`bg-white border-r border-gray-200 flex flex-col transition-all duration-300 shadow-lg ${isSidebarOpen ? 'w-80' : 'w-0 overflow-hidden'}`}>
-        <div className="p-6 flex-shrink-0">
-          <h2 className="text-2xl font-bold text-gray-800 mb-2 flex items-center">
+        <div className="p-6 flex-shrink-0 flex items-center justify-between">
+          <h2 className="text-2xl font-bold text-gray-800 flex items-center">
              <span className="mr-2 text-blue-600"><Filter size={24} /></span> Filters
           </h2>
+          <button 
+             onClick={() => setIsSidebarOpen(false)} 
+             className="p-2 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+             title="Collapse Sidebar"
+          >
+             <ChevronLeft size={20} />
+          </button>
         </div>
         
         <div className="flex-1 overflow-y-auto px-6 pb-6 sidebar-scroll space-y-6">
@@ -239,9 +246,15 @@ const App: React.FC = () => {
         <header className="p-6 md:p-8 flex-shrink-0">
           <div className="flex justify-between items-center mb-6">
              <div className="flex items-center">
-                <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-md hover:bg-gray-200 mr-4 text-gray-600">
-                   {isSidebarOpen ? <X size={24} /> : <Filter size={24} />}
-                </button>
+                {!isSidebarOpen && (
+                  <button 
+                    onClick={() => setIsSidebarOpen(true)} 
+                    className="p-2 rounded-md hover:bg-gray-200 mr-4 text-gray-600 transition-colors"
+                    title="Open Filters"
+                  >
+                     <Filter size={24} />
+                  </button>
+                )}
                 <div>
                   <h1 className="text-3xl font-bold text-gray-800">Conversation Analysis</h1>
                   <div className="flex items-center text-sm text-gray-500 mt-1">

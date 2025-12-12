@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Play, Download, Search, Settings as SettingsIcon, Filter, Zap, Shield, ShieldCheck, Plus, Trash2 } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';
-import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO, PII_PATTERNS } from '../constants';
+import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO, PII_PATTERNS, INTERMEDIATE_BATCH_PROMPT } from '../constants';
 import * as XLSX from 'xlsx';
 
 interface Props {
@@ -65,6 +65,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [summaryStatus, setSummaryStatus] = useState<string>(''); // To show batch progress
   const [estimate, setEstimate] = useState('');
 
   // --- EFFECTS ---
@@ -153,6 +154,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
     setResults([]);
     setSummary(null);
     setSettingsVisible(false);
+    setSummaryStatus('');
 
     const targetRows = limitScope ? rows.slice(0, rowsToAnalyzeCount) : rows;
     setProgress({ current: 0, total: targetRows.length });
@@ -224,7 +226,8 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
         await Promise.all(promises);
 
         if (mode === 'standard') {
-            generateSummary(tempResults, gemini);
+            // Pass the queue to generateSummary so it can respect rate limits during batch processing
+            await generateSummary(tempResults, gemini, queue);
         }
 
     } catch (e: any) {
@@ -234,26 +237,70 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
     }
   };
 
-  const generateSummary = async (results: any[], gemini: GeminiService) => {
+  const generateSummary = async (results: any[], gemini: GeminiService, queue: RequestQueue) => {
     setIsSummarizing(true);
+    setSummaryStatus('Preparing data...');
+    
     const validResults = results.filter(r => r.insight && !r.error);
     if (validResults.length === 0) { setIsSummarizing(false); return; }
 
-    const insightsText = validResults.map(r => JSON.stringify(r.insight)).join('\n\n');
-    const prompt = summaryPrompt
-        .replace('{insight_count}', validResults.length.toString())
-        .replace('{all_insights}', insightsText);
+    const BATCH_SIZE = 50; // Process 50 conversations at a time to stay within context/token limits
+    let finalInputForSummary = '';
 
     try {
+        if (validResults.length <= BATCH_SIZE) {
+            // Small enough to do in one go
+            finalInputForSummary = validResults.map(r => JSON.stringify(r.insight)).join('\n\n');
+        } else {
+            // --- MAP-REDUCE STRATEGY ---
+            const batches = [];
+            for (let i = 0; i < validResults.length; i += BATCH_SIZE) {
+                batches.push(validResults.slice(i, i + BATCH_SIZE));
+            }
+
+            setSummaryStatus(`Processing ${batches.length} batches for summary...`);
+            
+            const batchPromises = batches.map((batch, index) => {
+                return queue.add(async () => {
+                    const batchInsights = batch.map(r => JSON.stringify(r.insight)).join('\n');
+                    const batchPrompt = INTERMEDIATE_BATCH_PROMPT
+                        .replace('{count}', batch.length.toString())
+                        .replace('{batch_insights}', batchInsights);
+                    
+                    try {
+                        const text = await gemini.generateContent(batchPrompt, true);
+                        setSummaryStatus(`Batch ${index + 1}/${batches.length} completed.`);
+                        return text; // Should be JSON string of intermediate stats
+                    } catch (e) {
+                        console.error(`Batch ${index} summary failed`, e);
+                        return null;
+                    }
+                });
+            });
+
+            const batchResults = await Promise.all(batchPromises);
+            const successfulBatches = batchResults.filter(r => r !== null);
+            finalInputForSummary = successfulBatches.join('\n\n');
+        }
+
+        setSummaryStatus('Generating final executive summary...');
+
+        // Final Aggregation
+        const prompt = summaryPrompt
+            .replace('{insight_count}', validResults.length.toString())
+            .replace('{all_insights}', finalInputForSummary);
+
         const text = await gemini.generateContent(prompt, true);
         const jsonStr = text.replace(/```json|```/g, '').trim();
         const summaryData = JSON.parse(jsonStr);
         setSummary(formatSummaryHtml(summaryData));
+
     } catch (e) {
         console.error(e);
-        setSummary('<p class="text-red-500">Failed to generate summary.</p>');
+        setSummary('<p class="text-red-500">Failed to generate summary due to model overload or content length.</p>');
     } finally {
         setIsSummarizing(false);
+        setSummaryStatus('');
     }
   };
 
@@ -618,14 +665,17 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                         {piiConfig.enabled && (
                             <p className="text-green-600 font-semibold flex items-center gap-1 mt-1"><ShieldCheck size={12}/> Redaction Enabled</p>
                         )}
+                        {isSummarizing && summaryStatus && (
+                            <p className="text-blue-600 font-semibold mt-1 animate-pulse">{summaryStatus}</p>
+                        )}
                     </div>
                     <button 
                         onClick={handleStart} 
-                        disabled={isAnalyzing || rows.length === 0 || !apiKey}
+                        disabled={isAnalyzing || isSummarizing || rows.length === 0 || !apiKey}
                         className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2 transition-all"
                     >
-                        {isAnalyzing ? (
-                            <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Analyzing...</>
+                        {isAnalyzing || isSummarizing ? (
+                            <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> {isSummarizing ? 'Summarizing...' : 'Analyzing...'}</>
                         ) : (
                             <><Play size={18} /> Start Analysis</>
                         )}
