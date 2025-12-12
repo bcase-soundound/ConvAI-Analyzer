@@ -1,3 +1,4 @@
+
 export const WORKER_CODE = `
 self.importScripts('https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js');
 
@@ -369,6 +370,34 @@ export const TA_MODEL_INFO: Record<string, { name: string; rpm: number }> = {
     'gemini-2.5-flash-lite-preview': { name: 'Gemini 2.5 Flash Lite Preview', rpm: 15 },
     'gemini-2.0-flash': { name: 'Gemini 2.0 Flash', rpm: 15 },
     'gemini-2.0-flash-lite': { name: 'Gemini 2.0 Flash Lite', rpm: 30 }
+};
+
+export const PII_PATTERNS = {
+    EMAIL: { 
+        label: 'Email Addresses', 
+        regex: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b", 
+        replace: '[EMAIL_REDACTED]' 
+    },
+    PHONE: { 
+        label: 'Phone Numbers', 
+        regex: "\\b(\\+?1?[-.]?\\s?(\\(?\\d{3}\\)?[-.]?\\s?)?\\d{3}[-.]?\\s?\\d{4})\\b", 
+        replace: '[PHONE_REDACTED]' 
+    },
+    SSN: {
+        label: 'SSN / ID Numbers',
+        regex: "\\b(?!000|666|9\\d{2})\\d{3}[- ](?!00)\\d{2}[- ](?!0000)\\d{4}\\b",
+        replace: '[SSN_REDACTED]'
+    },
+    IPV4: {
+        label: 'IPv4 Addresses',
+        regex: "\\b((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b",
+        replace: '[IP_REDACTED]'
+    },
+    CREDIT_CARD: {
+        label: 'Credit Card Numbers',
+        regex: "\\b(?:\\d{4}[- ]?){3}\\d{4}\\b",
+        replace: '[CC_REDACTED]'
+    }
 };
 
 export const DEFAULT_ANALYSIS_PROMPT = `You are an expert analyst. Analyze this transcript:

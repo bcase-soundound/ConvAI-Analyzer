@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { X, Play, Download, Search, Settings as SettingsIcon, Filter, Zap } from 'lucide-react';
+import { X, Play, Download, Search, Settings as SettingsIcon, Filter, Zap, Shield, ShieldCheck, Plus, Trash2 } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';
-import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO } from '../constants';
+import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO, PII_PATTERNS } from '../constants';
 import * as XLSX from 'xlsx';
 
 interface Props {
@@ -9,6 +9,19 @@ interface Props {
   worker: Worker | null;
   filteredIndexes: number[];
   headers: string[];
+}
+
+interface CustomPiiPattern {
+    id: string;
+    name: string;
+    regex: string;
+    replacement: string;
+}
+
+interface PiiConfig {
+    enabled: boolean;
+    activeTypes: string[];
+    customPatterns: CustomPiiPattern[];
 }
 
 const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes, headers }) => {
@@ -20,6 +33,16 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   const [mode, setMode] = useState<'standard' | 'custom'>('standard');
   const [limitScope, setLimitScope] = useState(true);
   const [rowsToAnalyzeCount, setRowsToAnalyzeCount] = useState(20);
+  
+  // PII Redaction State
+  const [piiConfig, setPiiConfig] = useState<PiiConfig>(() => {
+      const saved = localStorage.getItem('ta_piiConfig');
+      return saved ? JSON.parse(saved) : {
+          enabled: false,
+          activeTypes: Object.keys(PII_PATTERNS),
+          customPatterns: []
+      };
+  });
   
   // Custom Query
   const [customQuery, setCustomQuery] = useState(localStorage.getItem('ta_customQuery') || '');
@@ -82,6 +105,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   useEffect(() => localStorage.setItem('ta_analysisPrompt', analysisPrompt), [analysisPrompt]);
   useEffect(() => localStorage.setItem('ta_summaryPrompt', summaryPrompt), [summaryPrompt]);
   useEffect(() => localStorage.setItem('ta_varMapping', JSON.stringify(variableMapping)), [variableMapping]);
+  useEffect(() => localStorage.setItem('ta_piiConfig', JSON.stringify(piiConfig)), [piiConfig]);
 
   // --- LOGIC ---
 
@@ -91,6 +115,34 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
       // Reset RPM to model default when model changes
       const defaultRpm = TA_MODEL_INFO[newModel]?.rpm || 10;
       setRpm(defaultRpm);
+  };
+
+  // Redaction Logic
+  const redactContent = (text: string): string => {
+      if (!piiConfig.enabled || !text) return text;
+      let redacted = text;
+
+      // 1. Standard Patterns
+      piiConfig.activeTypes.forEach(type => {
+          const pattern = PII_PATTERNS[type as keyof typeof PII_PATTERNS];
+          if (pattern) {
+              const regex = new RegExp(pattern.regex, 'gi');
+              redacted = redacted.replace(regex, pattern.replace);
+          }
+      });
+
+      // 2. Custom Patterns
+      piiConfig.customPatterns.forEach(p => {
+          if (!p.regex) return;
+          try {
+              const regex = new RegExp(p.regex, 'gi');
+              redacted = redacted.replace(regex, p.replacement || '[REDACTED]');
+          } catch (e) {
+              console.warn(`Invalid regex for custom PII pattern "${p.name}"`);
+          }
+      });
+
+      return redacted;
   };
 
   const handleStart = async () => {
@@ -139,7 +191,13 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                         if (v === 'transcript_text') colName = headers.find(h => h.toLowerCase().includes('transcript')) || '';
                     }
                     
-                    const val = colName && row[colName] ? String(row[colName]) : `[MISSING: ${v}]`;
+                    let val = colName && row[colName] ? String(row[colName]) : `[MISSING: ${v}]`;
+                    
+                    // APPLY REDACTION BEFORE INJECTION
+                    if (piiConfig.enabled) {
+                        val = redactContent(val);
+                    }
+
                     prompt = prompt.replace(new RegExp(`\\{${v}\\}`, 'g'), val);
                 });
 
@@ -308,6 +366,27 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
       }
   };
 
+  const addCustomPii = () => {
+      setPiiConfig(prev => ({
+          ...prev,
+          customPatterns: [...prev.customPatterns, { id: Date.now().toString(), name: 'New Pattern', regex: '', replacement: '[REDACTED]' }]
+      }));
+  };
+
+  const updateCustomPii = (id: string, field: keyof CustomPiiPattern, value: string) => {
+      setPiiConfig(prev => ({
+          ...prev,
+          customPatterns: prev.customPatterns.map(p => p.id === id ? { ...p, [field]: value } : p)
+      }));
+  };
+
+  const removeCustomPii = (id: string) => {
+      setPiiConfig(prev => ({
+          ...prev,
+          customPatterns: prev.customPatterns.filter(p => p.id !== id)
+      }));
+  };
+
   return (
     <div className="bg-white h-full flex flex-col overflow-hidden relative">
       {/* Header */}
@@ -425,9 +504,90 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                     )}
                 </div>
 
-                {/* 3. Scope */}
+                 {/* 3. PII Redaction */}
+                 <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-semibold text-gray-800 flex items-center gap-2">3. Privacy & Redaction</h3>
+                        <button 
+                            onClick={() => setPiiConfig(prev => ({ ...prev, enabled: !prev.enabled }))}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${piiConfig.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                        >
+                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${piiConfig.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
+                        </button>
+                    </div>
+
+                    <div className={`space-y-3 transition-all ${piiConfig.enabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        <p className="text-xs text-gray-500">Redact sensitive info locally before sending to AI.</p>
+                        
+                        {/* Standard Types */}
+                        <div className="space-y-2">
+                             {Object.entries(PII_PATTERNS).map(([key, info]) => (
+                                 <label key={key} className="flex items-center space-x-2 cursor-pointer">
+                                     <input 
+                                        type="checkbox" 
+                                        checked={piiConfig.activeTypes.includes(key)}
+                                        onChange={() => {
+                                            setPiiConfig(prev => {
+                                                const newTypes = prev.activeTypes.includes(key) 
+                                                    ? prev.activeTypes.filter(t => t !== key)
+                                                    : [...prev.activeTypes, key];
+                                                return { ...prev, activeTypes: newTypes };
+                                            });
+                                        }}
+                                        className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4 border-gray-300"
+                                     />
+                                     <span className="text-sm text-gray-700">{info.label}</span>
+                                 </label>
+                             ))}
+                        </div>
+
+                        {/* Custom Regex */}
+                        <div className="pt-2 border-t border-gray-100">
+                             <div className="flex justify-between items-center mb-2">
+                                <span className="text-xs font-bold text-gray-500 uppercase">Custom Patterns (Regex)</span>
+                                <button onClick={addCustomPii} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"><Plus size={12}/> Add</button>
+                             </div>
+                             
+                             <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                                 {piiConfig.customPatterns.map(p => (
+                                     <div key={p.id} className="p-2 bg-gray-50 rounded border border-gray-200 space-y-2">
+                                         <div className="flex justify-between items-center">
+                                             <input 
+                                                type="text" 
+                                                value={p.name}
+                                                onChange={e => updateCustomPii(p.id, 'name', e.target.value)}
+                                                className="bg-transparent text-xs font-semibold text-gray-700 focus:outline-none w-2/3"
+                                                placeholder="Pattern Name"
+                                             />
+                                             <button onClick={() => removeCustomPii(p.id)} className="text-red-500 hover:text-red-700"><Trash2 size={12} /></button>
+                                         </div>
+                                         <input 
+                                            type="text" 
+                                            value={p.regex}
+                                            onChange={e => updateCustomPii(p.id, 'regex', e.target.value)}
+                                            className="w-full text-xs p-1 border border-gray-300 rounded font-mono"
+                                            placeholder="Regex (e.g. \b\d{5}\b)"
+                                         />
+                                          <input 
+                                            type="text" 
+                                            value={p.replacement}
+                                            onChange={e => updateCustomPii(p.id, 'replacement', e.target.value)}
+                                            className="w-full text-xs p-1 border border-gray-300 rounded text-gray-500"
+                                            placeholder="Replacement"
+                                         />
+                                     </div>
+                                 ))}
+                                 {piiConfig.customPatterns.length === 0 && (
+                                     <p className="text-xs text-gray-400 italic">No custom patterns defined.</p>
+                                 )}
+                             </div>
+                        </div>
+                    </div>
+                 </div>
+
+                {/* 4. Scope */}
                 <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                    <h3 className="font-semibold text-gray-800 mb-3">3. Select Scope</h3>
+                    <h3 className="font-semibold text-gray-800 mb-3">4. Select Scope</h3>
                     <div className="space-y-2">
                         <label className={`flex items-center p-3 border rounded-md cursor-pointer transition-colors ${!limitScope ? 'bg-blue-50 border-blue-200' : 'border-gray-200 hover:bg-gray-50'}`}>
                             <input type="radio" name="scope" checked={!limitScope} onChange={() => setLimitScope(false)} className="text-blue-600 focus:ring-blue-500" />
@@ -449,12 +609,15 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                     </div>
                 </div>
 
-                {/* 4. Start */}
+                {/* 5. Start */}
                 <div className="p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
-                    <h3 className="font-semibold text-gray-800 mb-2">4. Start Analysis</h3>
+                    <h3 className="font-semibold text-gray-800 mb-2">5. Start Analysis</h3>
                     <div className="mb-4 text-xs text-gray-500">
                         <p><strong>Est. Time:</strong> {estimate}</p>
                         <p>Targeting {rpm} requests per minute.</p>
+                        {piiConfig.enabled && (
+                            <p className="text-green-600 font-semibold flex items-center gap-1 mt-1"><ShieldCheck size={12}/> Redaction Enabled</p>
+                        )}
                     </div>
                     <button 
                         onClick={handleStart} 
