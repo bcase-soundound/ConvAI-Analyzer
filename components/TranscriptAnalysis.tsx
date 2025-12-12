@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Play, Download, Search, Settings as SettingsIcon, Filter } from 'lucide-react';
+import { X, Play, Download, Search, Settings as SettingsIcon, Filter, Zap } from 'lucide-react';
 import { GeminiService, RequestQueue } from '../services/geminiService';
 import { DEFAULT_ANALYSIS_PROMPT, DEFAULT_CUSTOM_PROMPT, DEFAULT_SUMMARY_PROMPT, TA_MODEL_INFO } from '../constants';
 import * as XLSX from 'xlsx';
@@ -16,6 +16,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   // Configuration
   const [apiKey, setApiKey] = useState(localStorage.getItem('geminiKey') || '');
   const [model, setModel] = useState('gemini-2.5-flash');
+  const [rpm, setRpm] = useState<number>(TA_MODEL_INFO['gemini-2.5-flash']?.rpm || 10);
   const [mode, setMode] = useState<'standard' | 'custom'>('standard');
   const [limitScope, setLimitScope] = useState(true);
   const [rowsToAnalyzeCount, setRowsToAnalyzeCount] = useState(20);
@@ -60,18 +61,20 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
 
   // Update Estimate
   useEffect(() => {
-    const rpm = TA_MODEL_INFO[model]?.rpm || 60;
+    // Basic calculation: Total items / RPM = Minutes
+    // We add a small buffer for network latency overhead per batch
     const count = limitScope ? Math.min(rowsToAnalyzeCount, rows.length) : rows.length;
-    if (count <= 0) {
+    if (count <= 0 || rpm <= 0) {
         setEstimate('0s');
         return;
     }
-    const delayPerRequestMs = (60000 / rpm) + 500; 
-    const totalTimeMs = count * (delayPerRequestMs + 2000); // +2s for api latency
-    const seconds = Math.round(totalTimeMs / 1000);
+    
+    // Logic: If RPM is 60, we do 1 per second. 
+    // Total time (seconds) = Count * (60 / RPM)
+    const seconds = Math.ceil(count * (60 / rpm));
     
     setEstimate(seconds < 60 ? `~${seconds} seconds` : `~${Math.floor(seconds/60)} min ${seconds%60} sec`);
-  }, [model, limitScope, rowsToAnalyzeCount, rows.length]);
+  }, [rpm, limitScope, rowsToAnalyzeCount, rows.length]);
 
   // Persist Settings
   useEffect(() => localStorage.setItem('geminiKey', apiKey), [apiKey]);
@@ -81,6 +84,14 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   useEffect(() => localStorage.setItem('ta_varMapping', JSON.stringify(variableMapping)), [variableMapping]);
 
   // --- LOGIC ---
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const newModel = e.target.value;
+      setModel(newModel);
+      // Reset RPM to model default when model changes
+      const defaultRpm = TA_MODEL_INFO[newModel]?.rpm || 10;
+      setRpm(defaultRpm);
+  };
 
   const handleStart = async () => {
     if (!apiKey) { alert('API Key required'); return; }
@@ -95,7 +106,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
     setProgress({ current: 0, total: targetRows.length });
 
     const gemini = new GeminiService(apiKey, model);
-    const rpm = TA_MODEL_INFO[model]?.rpm || 10;
+    // Use user-defined RPM
     const queue = new RequestQueue(rpm);
 
     const tempResults: any[] = [];
@@ -335,19 +346,41 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                                 placeholder="Enter your key..."
                             />
                         </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Model</label>
-                            <select 
-                                value={model} 
-                                onChange={e => setModel(e.target.value)} 
-                                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
-                            >
-                                {Object.entries(TA_MODEL_INFO).map(([key, info]) => (
-                                    <option key={key} value={key}>{info.name} ({info.rpm} RPM)</option>
-                                ))}
-                            </select>
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="col-span-2">
+                                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Model</label>
+                                <select 
+                                    value={model} 
+                                    onChange={handleModelChange} 
+                                    className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                                >
+                                    {Object.entries(TA_MODEL_INFO).map(([key, info]) => (
+                                        <option key={key} value={key}>{info.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="col-span-2">
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="block text-xs font-bold text-gray-500 uppercase">Rate Limit (RPM)</label>
+                                    <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                                        {Math.ceil(60000 / rpm)}ms delay
+                                    </span>
+                                </div>
+                                <div className="relative">
+                                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                        <Zap size={14} className="text-yellow-500" />
+                                    </div>
+                                    <input 
+                                        type="number" 
+                                        value={rpm} 
+                                        onChange={e => setRpm(Math.max(1, Number(e.target.value)))} 
+                                        className="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-md text-sm text-gray-900 focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                                <p className="text-[10px] text-gray-500 mt-1">Adjust based on your API tier limits. Higher RPM enables parallel processing.</p>
+                            </div>
                         </div>
-                        <button onClick={() => { setApiKey(''); setModel('gemini-2.5-flash'); }} className="text-xs text-blue-600 hover:underline">Clear Settings</button>
+                        <button onClick={() => { setApiKey(''); setModel('gemini-2.5-flash'); setRpm(10); }} className="text-xs text-blue-600 hover:underline">Clear Settings</button>
                     </div>
                 </div>
 
@@ -421,7 +454,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                     <h3 className="font-semibold text-gray-800 mb-2">4. Start Analysis</h3>
                     <div className="mb-4 text-xs text-gray-500">
                         <p><strong>Est. Time:</strong> {estimate}</p>
-                        <p>Based on {TA_MODEL_INFO[model]?.rpm || 60} RPM</p>
+                        <p>Targeting {rpm} requests per minute.</p>
                     </div>
                     <button 
                         onClick={handleStart} 
