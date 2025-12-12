@@ -24,6 +24,32 @@ interface PiiConfig {
     customPatterns: CustomPiiPattern[];
 }
 
+// Utility to safely parse JSON from LLM output
+const safeJsonParse = (text: string) => {
+    try {
+        // 1. Try direct parse
+        return JSON.parse(text);
+    } catch (e) {
+        // 2. Cleanup Markdown
+        const clean = text.replace(/```json|```/g, '').trim();
+        try {
+            return JSON.parse(clean);
+        } catch (e2) {
+            // 3. Find first { and last }
+            const start = clean.indexOf('{');
+            const end = clean.lastIndexOf('}');
+            if (start !== -1 && end !== -1) {
+                try {
+                    return JSON.parse(clean.substring(start, end + 1));
+                } catch (e3) {
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+};
+
 const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes, headers }) => {
   // --- STATE ---
   // Configuration
@@ -65,6 +91,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const [summaryProgress, setSummaryProgress] = useState({ current: 0, total: 0 });
   const [summaryStatus, setSummaryStatus] = useState<string>(''); // To show batch progress
   const [estimate, setEstimate] = useState('');
 
@@ -155,6 +182,7 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
     setSummary(null);
     setSettingsVisible(false);
     setSummaryStatus('');
+    setSummaryProgress({ current: 0, total: 0 });
 
     const targetRows = limitScope ? rows.slice(0, rowsToAnalyzeCount) : rows;
     setProgress({ current: 0, total: targetRows.length });
@@ -208,8 +236,12 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
 
                 try {
                     const text = await gemini.generateContent(prompt, true);
-                    const jsonStr = text.replace(/```json|```/g, '').trim();
-                    insight = JSON.parse(jsonStr);
+                    const parsed = safeJsonParse(text);
+                    if (parsed) {
+                        insight = parsed;
+                    } else {
+                        error = "Invalid JSON response";
+                    }
                 } catch (e: any) {
                     error = e.message;
                 }
@@ -239,13 +271,16 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
 
   const generateSummary = async (results: any[], gemini: GeminiService, queue: RequestQueue) => {
     setIsSummarizing(true);
-    setSummaryStatus('Preparing data...');
+    setSummaryStatus('Preparing summary data...');
     
     const validResults = results.filter(r => r.insight && !r.error);
     if (validResults.length === 0) { setIsSummarizing(false); return; }
 
-    const BATCH_SIZE = 50; // Process 50 conversations at a time to stay within context/token limits
+    const BATCH_SIZE = 25; // Reduce batch size to prevent token overflow on large inputs
     let finalInputForSummary = '';
+    
+    // Reset queue for summary phase (optional, but ensures clean slate)
+    // queue.clear(); 
 
     try {
         if (validResults.length <= BATCH_SIZE) {
@@ -258,8 +293,11 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                 batches.push(validResults.slice(i, i + BATCH_SIZE));
             }
 
-            setSummaryStatus(`Processing ${batches.length} batches for summary...`);
+            setSummaryProgress({ current: 0, total: batches.length });
+            setSummaryStatus(`Summarizing in ${batches.length} batches...`);
             
+            let completedBatches = 0;
+
             const batchPromises = batches.map((batch, index) => {
                 return queue.add(async () => {
                     const batchInsights = batch.map(r => JSON.stringify(r.insight)).join('\n');
@@ -269,21 +307,25 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
                     
                     try {
                         const text = await gemini.generateContent(batchPrompt, true);
-                        setSummaryStatus(`Batch ${index + 1}/${batches.length} completed.`);
-                        return text; // Should be JSON string of intermediate stats
+                        completedBatches++;
+                        setSummaryProgress(prev => ({ ...prev, current: completedBatches }));
+                        return text; 
                     } catch (e) {
                         console.error(`Batch ${index} summary failed`, e);
+                        completedBatches++;
+                        setSummaryProgress(prev => ({ ...prev, current: completedBatches }));
                         return null;
                     }
                 });
             });
 
             const batchResults = await Promise.all(batchPromises);
-            const successfulBatches = batchResults.filter(r => r !== null);
+            const successfulBatches = batchResults.filter(r => r !== null && safeJsonParse(r)); // Ensure valid JSON
             finalInputForSummary = successfulBatches.join('\n\n');
         }
 
         setSummaryStatus('Generating final executive summary...');
+        setSummaryProgress({ current: 0, total: 0 }); // Hide batch progress
 
         // Final Aggregation
         const prompt = summaryPrompt
@@ -291,13 +333,17 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
             .replace('{all_insights}', finalInputForSummary);
 
         const text = await gemini.generateContent(prompt, true);
-        const jsonStr = text.replace(/```json|```/g, '').trim();
-        const summaryData = JSON.parse(jsonStr);
-        setSummary(formatSummaryHtml(summaryData));
+        const summaryData = safeJsonParse(text);
+        
+        if (summaryData) {
+            setSummary(formatSummaryHtml(summaryData));
+        } else {
+             throw new Error("Final summary response was not valid JSON");
+        }
 
-    } catch (e) {
+    } catch (e: any) {
         console.error(e);
-        setSummary('<p class="text-red-500">Failed to generate summary due to model overload or content length.</p>');
+        setSummary(`<p class="text-red-500 bg-red-50 p-3 rounded">Failed to generate summary: ${e.message}. <br/><br/>Try reducing the 'Rows to Analyze' count or switch to a higher tier model.</p>`);
     } finally {
         setIsSummarizing(false);
         setSummaryStatus('');
@@ -687,17 +733,33 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
         {/* RIGHT PANEL: RESULTS */}
         <div className="flex-1 flex flex-col h-full bg-white overflow-hidden relative">
             
-            {/* Progress Bar (Visible only when analyzing) */}
+            {/* Progress Bar (Analyzing) */}
             {(isAnalyzing || progress.current > 0) && (
                 <div className="px-6 pt-6 pb-2">
                     <div className="flex justify-between text-sm mb-1 font-medium text-gray-700">
-                        <span>Progress: {progress.current} / {progress.total}</span>
-                        <span>{Math.round((progress.current / progress.total) * 100)}%</span>
+                        <span>Analysis Progress: {progress.current} / {progress.total}</span>
+                        <span>{Math.round((progress.current / Math.max(progress.total, 1)) * 100)}%</span>
                     </div>
                     <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
                         <div 
                             className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
                             style={{ width: `${(progress.current / Math.max(progress.total, 1)) * 100}%` }}
+                        ></div>
+                    </div>
+                </div>
+            )}
+
+             {/* Progress Bar (Summarizing) */}
+             {isSummarizing && summaryProgress.total > 0 && (
+                <div className="px-6 pt-2 pb-2">
+                    <div className="flex justify-between text-sm mb-1 font-medium text-purple-700">
+                        <span>Summarization Batches: {summaryProgress.current} / {summaryProgress.total}</span>
+                        <span>{Math.round((summaryProgress.current / summaryProgress.total) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-purple-50 rounded-full h-2.5 overflow-hidden">
+                        <div 
+                            className="bg-purple-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                            style={{ width: `${(summaryProgress.current / summaryProgress.total) * 100}%` }}
                         ></div>
                     </div>
                 </div>

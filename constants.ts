@@ -430,12 +430,17 @@ Analyze the following batch of {count} conversation insights.
 Consolidate them into a single JSON object.
 Aggregate the 'top_intents' (with counts), 'common_successes', and 'top_failures' found in this batch.
 Do NOT write an 'overall_performance' summary yet, just aggregate the data points.
+Be EXTREMELY concise. Do not add markdown or conversational filler.
+Respond ONLY with valid JSON.
 
-Respond ONLY with valid JSON:
+Input format example:
+[{ "intent": { "name": "Pwd Reset" } }, ...]
+
+Output JSON format:
 {
-  "top_intents": [ { "intent": "Name", "count": 0, "details": "Merged details" } ],
-  "common_successes": [ { "success": "Name", "count": 0, "details": "Merged details" } ],
-  "top_failures": [ { "failure": "Name", "count": 0, "details": "Merged details" } ]
+  "top_intents": [ { "intent": "Pwd Reset", "count": 5, "details": "Merged details" } ],
+  "common_successes": [],
+  "top_failures": []
 }
 
 ---
