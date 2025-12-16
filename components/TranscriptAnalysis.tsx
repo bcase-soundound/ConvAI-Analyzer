@@ -100,9 +100,18 @@ const TranscriptAnalysis: React.FC<Props> = ({ onClose, worker, filteredIndexes,
   // Load Data
   useEffect(() => {
     if (!worker) return;
+    
+    // Clear state initially
+    setRows([]);
+
     const handleMessage = (e: MessageEvent) => {
-      if (e.data.type === 'transcript-data-result') {
-        setRows(e.data.rows);
+      const { type, rows: newRows } = e.data;
+      if (type === 'transcript-data-start') {
+        setRows([]);
+      } else if (type === 'transcript-data-chunk') {
+        setRows(prev => [...prev, ...newRows]);
+      } else if (type === 'transcript-data-complete') {
+        // Optional: Loading finished logic
       }
     };
     worker.addEventListener('message', handleMessage);

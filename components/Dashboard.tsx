@@ -1,7 +1,7 @@
 import React from 'react';
 import { SummaryStats } from '../types';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { ChevronLeft, ChevronRight, ArrowUp, ArrowDown } from 'lucide-react';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { ArrowUp, ArrowDown } from 'lucide-react';
 
 interface Props {
   stats: SummaryStats;
@@ -41,7 +41,8 @@ const Dashboard: React.FC<Props> = ({
               <StatCard title="Peak Concurrency" value={stats.peakConcurrency.toLocaleString()} hint="Max active conversations at same second." />
               <StatCard title="Avg. Concurrency" value={stats.avgConcurrency.toFixed(2)} hint="Weighted average of active conversations." />
               <StatCard title="Total Contained" value={stats.totalContained.toLocaleString()} hint="Conversations marked 'Amelia Handled' = true." />
-              {/* Spacer or extra metric could go here to complete 8 grid cells, or leave 7 */}
+              {/* Spacer */}
+              <div className="hidden lg:block"></div>
            </div>
         </div>
 
@@ -76,27 +77,43 @@ const Dashboard: React.FC<Props> = ({
       </div>
 
       {/* Data Table */}
-      <div className="mt-6 bg-white rounded-xl shadow-md flex flex-col overflow-hidden border border-gray-200 h-[600px]">
+      <div className="mt-6 bg-white rounded-xl shadow-md flex flex-col border border-gray-200" style={{ height: 'calc(100vh - 250px)', minHeight: '500px' }}>
            <div className="overflow-auto flex-1 custom-scrollbar">
-               <table className="min-w-full divide-y divide-gray-200">
-                   <thead className="bg-gray-50 sticky top-0 z-10">
+               <table className="min-w-full divide-y divide-gray-200 relative">
+                   <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                        <tr>
                            {displayHeaders.map(h => (
-                               <th key={h} onClick={() => onSortChange(h)} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer whitespace-nowrap">
-                                   <div className="flex items-center gap-1">
+                               <th 
+                                 key={h} 
+                                 onClick={() => onSortChange(h)} 
+                                 className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer whitespace-nowrap hover:bg-gray-100 select-none transition-colors group"
+                               >
+                                   <div className="flex items-center gap-2">
                                        {h}
-                                       {sortConfig.key === h && (
-                                           sortConfig.direction === 'ascending' ? ' ▲' : ' ▼'
+                                       {sortConfig.key === h ? (
+                                           sortConfig.direction === 'ascending' ? <ArrowUp size={14} className="text-blue-600" /> : <ArrowDown size={14} className="text-blue-600" />
+                                       ) : (
+                                           <div className="w-3.5 h-3.5 opacity-0 group-hover:opacity-30">
+                                              <ArrowUp size={14} />
+                                           </div>
                                        )}
                                    </div>
                                </th>
                            ))}
                            {customMetrics.map(h => (
-                               <th key={h} onClick={() => onSortChange(h)} className="px-6 py-3 text-left text-xs font-medium text-green-600 bg-green-50 uppercase tracking-wider cursor-pointer whitespace-nowrap">
-                                    <div className="flex items-center gap-1">
+                               <th 
+                                 key={h} 
+                                 onClick={() => onSortChange(h)} 
+                                 className="px-6 py-3 text-left text-xs font-bold text-green-700 bg-green-50 uppercase tracking-wider cursor-pointer whitespace-nowrap hover:bg-green-100 select-none transition-colors group"
+                               >
+                                    <div className="flex items-center gap-2">
                                        {h}
-                                       {sortConfig.key === h && (
-                                           sortConfig.direction === 'ascending' ? ' ▲' : ' ▼'
+                                       {sortConfig.key === h ? (
+                                           sortConfig.direction === 'ascending' ? <ArrowUp size={14} className="text-green-600" /> : <ArrowDown size={14} className="text-green-600" />
+                                       ) : (
+                                            <div className="w-3.5 h-3.5 opacity-0 group-hover:opacity-30">
+                                              <ArrowUp size={14} />
+                                           </div>
                                        )}
                                    </div>
                                </th>
@@ -105,39 +122,39 @@ const Dashboard: React.FC<Props> = ({
                    </thead>
                    <tbody className="bg-white divide-y divide-gray-200">
                        {data.length > 0 ? data.map((row, i) => (
-                           <tr key={i}>
+                           <tr key={i} className="hover:bg-gray-50 transition-colors">
                                {displayHeaders.map(h => (
                                    <td key={h} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{String(row[h] ?? '')}</td>
                                ))}
                                {customMetrics.map(h => (
-                                   <td key={h} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 bg-green-50">{String(row[h] ?? '')}</td>
+                                   <td key={h} className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 bg-green-50/50">{String(row[h] ?? '')}</td>
                                ))}
                            </tr>
                        )) : (
-                           <tr><td colSpan={displayHeaders.length + customMetrics.length} className="text-center py-10 text-gray-500">No conversations match the current filters.</td></tr>
+                           <tr><td colSpan={displayHeaders.length + customMetrics.length} className="text-center py-20 text-gray-400 font-medium">No conversations match the current filters.</td></tr>
                        )}
                    </tbody>
                </table>
            </div>
            
            {/* Pagination */}
-           <div className="flex-shrink-0 p-2 border-t border-gray-200 flex items-center justify-between text-sm text-gray-600 bg-white">
+           <div className="flex-shrink-0 p-3 border-t border-gray-200 flex items-center justify-between text-sm text-gray-600 bg-gray-50">
                <div>
-                   Showing {(pagination.currentPage - 1) * pagination.rowsPerPage + 1} to {Math.min(pagination.currentPage * pagination.rowsPerPage, filteredCount)} of {filteredCount.toLocaleString()} results
+                   Showing <span className="font-medium text-gray-900">{(pagination.currentPage - 1) * pagination.rowsPerPage + 1}</span> to <span className="font-medium text-gray-900">{Math.min(pagination.currentPage * pagination.rowsPerPage, filteredCount)}</span> of <span className="font-medium text-gray-900">{filteredCount.toLocaleString()}</span> results
                </div>
-               <div className="flex items-center gap-2">
+               <div className="flex items-center gap-3">
                    <button 
                        disabled={pagination.currentPage === 1}
                        onClick={() => onPageChange(pagination.currentPage - 1)}
-                       className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                       className="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm font-medium text-gray-700 transition-colors"
                    >
                        Previous
                    </button>
-                   <span>Page {pagination.currentPage} of {Math.max(1, Math.ceil(filteredCount / pagination.rowsPerPage))}</span>
+                   <span className="bg-white px-3 py-1 rounded border border-gray-200 shadow-sm">Page {pagination.currentPage} of {Math.max(1, Math.ceil(filteredCount / pagination.rowsPerPage))}</span>
                    <button 
                        disabled={pagination.currentPage >= Math.ceil(filteredCount / pagination.rowsPerPage)}
                        onClick={() => onPageChange(pagination.currentPage + 1)}
-                       className="px-3 py-1 border border-gray-300 rounded-md hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                       className="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm font-medium text-gray-700 transition-colors"
                    >
                        Next
                    </button>
@@ -149,12 +166,11 @@ const Dashboard: React.FC<Props> = ({
 };
 
 const StatCard: React.FC<{ title: string; value: string; hint?: string }> = ({ title, value, hint }) => (
-    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group">
+    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group transition-all hover:shadow-md">
         <div className="flex items-center gap-2 mb-1">
             <h3 className="text-sm font-medium text-gray-500">{title}</h3>
             {hint && (
                 <div className="relative group cursor-help">
-                     {/* Simple Info Icon */}
                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 hover:text-blue-500"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-xs rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-center leading-tight">
                         {hint}

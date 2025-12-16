@@ -148,10 +148,11 @@ const App: React.FC = () => {
   const handleSortChange = (key: string) => {
     const direction = sortConfig.key === key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending';
     setSortConfig({ key, direction });
+    setPagination(prev => ({ ...prev, currentPage: 1 })); // Reset to first page on sort
     worker?.postMessage({ 
       type: 'request-page', 
       filters, 
-      pagination, 
+      pagination: { ...pagination, currentPage: 1 }, 
       sortConfig: { key, direction } 
     });
   };

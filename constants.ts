@@ -351,13 +351,23 @@ self.onmessage = function(e) {
          });
     } else if (type === 'request-transcript-data') {
          const finalHeaders = [...new Set([...headers, ...Array.from(customMetricKeys)])];
-         const rows = filteredIndexes.map(index => {
-             const rawRow = rawDataStore[index];
-             let casedRow = {};
-             finalHeaders.forEach(header => { casedRow[header] = rawRow[header.toLowerCase()]; });
-             return casedRow;
-         });
-         self.postMessage({ type: 'transcript-data-result', rows: rows });
+         
+         // Notify start
+         self.postMessage({ type: 'transcript-data-start', total: filteredIndexes.length });
+
+         const CHUNK_SIZE = 500; // 500 rows per chunk
+         for (let i = 0; i < filteredIndexes.length; i += CHUNK_SIZE) {
+             const chunkIndexes = filteredIndexes.slice(i, i + CHUNK_SIZE);
+             const rows = chunkIndexes.map(index => {
+                 const rawRow = rawDataStore[index];
+                 let casedRow = {};
+                 finalHeaders.forEach(header => { casedRow[header] = rawRow[header.toLowerCase()]; });
+                 return casedRow;
+             });
+             self.postMessage({ type: 'transcript-data-chunk', rows: rows });
+         }
+         
+         self.postMessage({ type: 'transcript-data-complete' });
     }
 };
 `;
