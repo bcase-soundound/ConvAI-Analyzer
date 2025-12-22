@@ -27,6 +27,10 @@ const Dashboard: React.FC<Props> = ({
   ];
   const COLORS = ['#3b82f6', '#e5e7eb'];
 
+  const containmentRate = stats.totalRows > 0 
+    ? (stats.totalContained / stats.totalRows) * 100 
+    : 0;
+
   return (
     <>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-shrink-0">
@@ -34,15 +38,54 @@ const Dashboard: React.FC<Props> = ({
         {/* Summary Panel - Takes 2 cols */}
         <div className="lg:col-span-2">
            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard title="Time Range" value={stats.timeRange} hint="The date and time span covered." />
-              <StatCard title="Total Conversations" value={stats.totalRows.toLocaleString()} hint="Total rows in CSV." />
-              <StatCard title="Filtered Conversations" value={filteredCount.toLocaleString()} hint="Rows matching active filters." />
-              <StatCard title="Avg. Handle Time" value={stats.avgHandleTime || "00:00"} hint="Avg duration (Finished - Created)." />
-              <StatCard title="Peak Concurrency" value={stats.peakConcurrency.toLocaleString()} hint="Max active conversations at same second." />
-              <StatCard title="Avg. Concurrency" value={stats.avgConcurrency.toFixed(2)} hint="Weighted average of active conversations." />
-              <StatCard title="Total Contained" value={stats.totalContained.toLocaleString()} hint="Conversations marked 'Amelia Handled' = true." />
-              {/* Spacer */}
-              <div className="hidden lg:block"></div>
+              <StatCard title="Time Range" value={stats.timeRange} hint="The date and time span covered by the uploaded dataset." />
+              <StatCard title="Total Conversations" value={stats.totalRows.toLocaleString()} hint="Total number of conversation records found in the CSV file." />
+              <StatCard title="Filtered Conversations" value={filteredCount.toLocaleString()} hint="Number of rows matching your currently active sidebar filters." />
+              <StatCard title="Avg. Handle Time" value={stats.avgHandleTime || "00:00"} hint="Calculated as the average duration between 'Finished' and 'Created' timestamps." />
+              <StatCard title="Peak Concurrency" value={stats.peakConcurrency.toLocaleString()} hint="The maximum number of overlapping conversations occurring at the exact same second." />
+              <StatCard title="Avg. Concurrency" value={stats.avgConcurrency.toFixed(2)} hint="The weighted average of active conversations over the entire time range." />
+              <StatCard title="Total Contained" value={stats.totalContained.toLocaleString()} hint="Total conversations where 'Amelia Handled' is set to true." />
+              
+              {/* Containment Rate Widget */}
+              <div className="bg-white p-5 rounded-xl shadow-sm border border-green-100 bg-gradient-to-br from-white to-green-50 relative transition-all hover:shadow-md">
+                <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-sm font-medium text-green-700">Containment Rate</h3>
+                    <div className="relative group/hint cursor-help">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400 hover:text-green-600">
+                          <circle cx="12" cy="12" r="10"></circle>
+                          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-48 p-2 bg-gray-800 text-white text-[11px] rounded-md shadow-lg opacity-0 invisible group-hover/hint:opacity-100 group-hover/hint:visible transition-all duration-200 z-50 pointer-events-none text-center leading-tight">
+                            The percentage of total conversations that were successfully handled without agent escalation.
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 -mb-1 border-4 border-transparent border-b-gray-800"></div>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-end justify-between mt-1">
+                    <p className="text-2xl font-bold text-green-800">{containmentRate.toFixed(1)}%</p>
+                    <div className="w-10 h-10 relative">
+                        <svg viewBox="0 0 36 36" className="w-full h-full transform -rotate-90">
+                            <path
+                                className="text-green-100"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                                fill="none"
+                                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            />
+                            <path
+                                className="text-green-500"
+                                stroke="currentColor"
+                                strokeWidth="4"
+                                strokeDasharray={`${containmentRate}, 100`}
+                                strokeLinecap="round"
+                                fill="none"
+                                d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                            />
+                        </svg>
+                    </div>
+                </div>
+              </div>
            </div>
         </div>
 
@@ -166,15 +209,19 @@ const Dashboard: React.FC<Props> = ({
 };
 
 const StatCard: React.FC<{ title: string; value: string; hint?: string }> = ({ title, value, hint }) => (
-    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative group transition-all hover:shadow-md">
+    <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200 relative transition-all hover:shadow-md">
         <div className="flex items-center gap-2 mb-1">
             <h3 className="text-sm font-medium text-gray-500">{title}</h3>
             {hint && (
-                <div className="relative group cursor-help">
-                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 hover:text-blue-500"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                     <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 p-2 bg-gray-800 text-white text-xs rounded-md shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50 pointer-events-none text-center leading-tight">
+                <div className="relative group/hint cursor-help">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 hover:text-blue-500">
+                       <circle cx="12" cy="12" r="10"></circle>
+                       <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                       <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                     </svg>
+                     <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 w-48 p-2 bg-gray-800 text-white text-[11px] rounded-md shadow-lg opacity-0 invisible group-hover/hint:opacity-100 group-hover/hint:visible transition-all duration-200 z-50 pointer-events-none text-center leading-tight">
                         {hint}
-                        <div className="absolute top-full left-1/2 transform -translate-x-1/2 -mt-1 border-4 border-transparent border-t-gray-800"></div>
+                        <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 -mb-1 border-4 border-transparent border-b-gray-800"></div>
                      </div>
                 </div>
             )}
